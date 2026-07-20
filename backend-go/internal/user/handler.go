@@ -1,12 +1,14 @@
 package user
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/pavithraG777/cyber-security-platform/backend/internal/auditlog"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/response"
 )
 
@@ -231,6 +233,80 @@ func (h *Handler) GetUserByID(c *gin.Context) {
 	)
 }
 
+func (s *Service) logUserUpdateFailure(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	updatedBy uuid.UUID,
+	userID uuid.UUID,
+	req UpdateUserRequest,
+	updateErr error,
+) {
+	entityID := userID
+
+	s.audit.LogFailure(
+		ctx,
+		auditlog.LogRequest{
+			OrganizationID: &organizationID,
+			UserID:         &updatedBy,
+
+			ModuleName: "USER",
+			ActionName: "UPDATE",
+
+			EntityType: "USER",
+			EntityID:   &entityID,
+
+			Description: "User update failed",
+
+			NewValues: map[string]any{
+				"official_email": req.OfficialEmail,
+				"employee_code":  req.EmployeeCode,
+				"first_name":     req.FirstName,
+				"middle_name":    req.MiddleName,
+				"last_name":      req.LastName,
+				"display_name":   req.DisplayName,
+				"designation":    req.Designation,
+				"official_phone": req.OfficialPhone,
+			},
+
+			Metadata: map[string]any{
+				"updated_by":      updatedBy,
+				"updated_user_id": userID,
+			},
+
+			RiskLevel: auditlog.RiskLevelMedium,
+
+			FailureReason: updateErr.Error(),
+		},
+	)
+}
+
+func userResponseToAuditValues(
+	user *GetUserResponse,
+) map[string]any {
+	if user == nil {
+		return map[string]any{}
+	}
+
+	return map[string]any{
+		"id":              user.ID,
+		"organization_id": user.OrganizationID,
+		"username":        user.Username,
+		"official_email":  user.OfficialEmail,
+		"user_type":       user.UserType,
+		"account_status":  user.AccountStatus,
+		"employee_code":   user.EmployeeCode,
+		"first_name":      user.FirstName,
+		"middle_name":     user.MiddleName,
+		"last_name":       user.LastName,
+		"display_name":    user.DisplayName,
+		"designation":     user.Designation,
+		"official_phone":  user.OfficialPhone,
+		"role_id":         user.RoleID,
+		"role_code":       user.RoleCode,
+		"role_name":       user.RoleName,
+	}
+}
+
 func (h *Handler) UpdateUser(c *gin.Context) {
 	organizationID, ok := getUUIDFromContext(
 		c,
@@ -240,6 +316,19 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 		response.Unauthorized(
 			c,
 			"Organization information is missing",
+			nil,
+		)
+		return
+	}
+
+	updatedBy, ok := getUUIDFromContext(
+		c,
+		"user_id",
+	)
+	if !ok {
+		response.Unauthorized(
+			c,
+			"User information is missing",
 			nil,
 		)
 		return
@@ -269,6 +358,7 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 	updatedUser, err := h.service.UpdateUser(
 		c.Request.Context(),
 		organizationID,
+		updatedBy,
 		userID,
 		req,
 	)
