@@ -24,9 +24,49 @@ func Middleware(
 
 		startedAt := time.Now().UTC()
 
+		/*
+			Request information-ஐ request context-ல் store செய்கிறது.
+
+			User service-ல் LogSuccess அல்லது LogFailure call செய்யும்போது,
+			இந்த context மூலமாக IP address, device name, user agent மற்றும்
+			session ID கிடைக்கும்.
+		*/
+		deviceName := strings.TrimSpace(
+			c.GetHeader("X-Device-Name"),
+		)
+
+		if deviceName == "" {
+			deviceName = detectDeviceName(
+				c.Request.UserAgent(),
+			)
+		}
+
+		requestContext := WithRequestDetails(
+			c.Request.Context(),
+			c.ClientIP(),
+			deviceName,
+			c.Request.UserAgent(),
+			getContextUUID(
+				c,
+				"token_id",
+			),
+		)
+
+		fmt.Println("================================")
+		fmt.Println("AUDIT MIDDLEWARE")
+		fmt.Println("IP:", c.ClientIP())
+		fmt.Println("Device:", deviceName)
+		fmt.Println("UserAgent:", c.Request.UserAgent())
+		fmt.Println("================================")
+
+		c.Request = c.Request.WithContext(
+			requestContext,
+		)
+
 		c.Next()
 
 		routePath := c.FullPath()
+
 		if strings.TrimSpace(routePath) == "" {
 			routePath = c.Request.URL.Path
 		}
@@ -38,20 +78,48 @@ func Middleware(
 
 		if statusCode >= http.StatusBadRequest {
 			resultStatus = ResultStatusFailed
+
 			failureReason = buildFailureReason(
 				statusCode,
 				c.Errors.String(),
 			)
 		}
 
-		moduleName := extractModuleName(routePath)
+		moduleName := extractModuleName(
+			routePath,
+		)
 
 		actionName := extractActionName(
 			c.Request.Method,
 		)
 
-		entityType := extractEntityType(routePath)
+		entityType := extractEntityType(
+			routePath,
+		)
+
 		entityID := extractEntityID(c)
+
+		/*
+			token_id, organization_id மற்றும் user_id சில நேரங்களில்
+			authentication middleware-ல் c.Next()க்கு முன்பு set ஆகும்.
+
+			அதனால் audit entry உருவாக்கும்போது மீண்டும் Gin context-ல் இருந்து
+			எடுக்கப்படுகிறது.
+		*/
+		sessionID := getContextUUID(
+			c,
+			"token_id",
+		)
+
+		organizationID := getContextUUID(
+			c,
+			"organization_id",
+		)
+
+		userID := getContextUUID(
+			c,
+			"user_id",
+		)
 
 		metadata := map[string]any{
 			"http_method":     c.Request.Method,
@@ -69,50 +137,55 @@ func Middleware(
 		}
 
 		auditEntry := &AuditLog{
-			OrganizationID: getContextUUID(
-				c,
-				"organization_id",
-			),
-			UserID: getContextUUID(
-				c,
-				"user_id",
-			),
-			SessionID: getContextUUID(
-				c,
-				"token_id",
-			),
+			OrganizationID: organizationID,
+			UserID:         userID,
+			SessionID:      sessionID,
+
 			ModuleName: moduleName,
 			ActionName: actionName,
+
 			EntityType: entityType,
 			EntityID:   entityID,
+
 			Description: buildDescription(
 				c.Request.Method,
 				routePath,
 				statusCode,
 			),
+
 			OldValues: map[string]any{},
 			NewValues: map[string]any{},
 			Metadata:  metadata,
+
 			IPAddress: c.ClientIP(),
-			DeviceName: strings.TrimSpace(
-				c.GetHeader("X-Device-Name"),
-			),
+
+			DeviceName: deviceName,
+
 			UserAgent: strings.TrimSpace(
 				c.Request.UserAgent(),
 			),
+
 			ResultStatus: resultStatus,
+
 			RiskLevel: determineRiskLevel(
 				c.Request.Method,
 				statusCode,
 			),
+
 			FailureReason: failureReason,
 			OccurredAt:    startedAt,
 		}
 
+		/*
+			Request முடிந்த பிறகும் audit log database-ல் save ஆக வேண்டும்.
+			அதனால் original request context பயன்படுத்தாமல் தனி timeout
+			context பயன்படுத்தப்படுகிறது.
+		*/
 		logContext, cancel := context.WithTimeout(
 			context.Background(),
 			auditLogTimeout,
 		)
+
 		defer cancel()
 
 		_ = service.Log(
@@ -126,7 +199,12 @@ func getContextUUID(
 	c *gin.Context,
 	key string,
 ) *uuid.UUID {
+	if c == nil {
+		return nil
+	}
+
 	value, exists := c.Get(key)
+
 	if !exists || value == nil {
 		return nil
 	}
@@ -141,8 +219,11 @@ func getContextUUID(
 
 	case string:
 		parsedID, err := uuid.Parse(
-			strings.TrimSpace(typedValue),
+			strings.TrimSpace(
+				typedValue,
+			),
 		)
+
 		if err != nil {
 			return nil
 		}
@@ -151,8 +232,11 @@ func getContextUUID(
 
 	default:
 		parsedID, err := uuid.Parse(
-			fmt.Sprint(typedValue),
+			strings.TrimSpace(
+				fmt.Sprint(typedValue),
+			),
 		)
+
 		if err != nil {
 			return nil
 		}
@@ -165,7 +249,12 @@ func getContextString(
 	c *gin.Context,
 	key string,
 ) string {
+	if c == nil {
+		return ""
+	}
+
 	value, exists := c.Get(key)
+
 	if !exists || value == nil {
 		return ""
 	}
@@ -178,7 +267,9 @@ func getContextString(
 func extractModuleName(
 	routePath string,
 ) string {
-	segments := splitRoutePath(routePath)
+	segments := splitRoutePath(
+		routePath,
+	)
 
 	ignoredSegments := map[string]struct{}{
 		"api":   {},
@@ -189,18 +280,26 @@ func extractModuleName(
 
 	for _, segment := range segments {
 		normalizedSegment := strings.ToLower(
-			strings.TrimSpace(segment),
+			strings.TrimSpace(
+				segment,
+			),
 		)
 
 		if normalizedSegment == "" {
 			continue
 		}
 
-		if strings.HasPrefix(normalizedSegment, ":") {
+		if strings.HasPrefix(
+			normalizedSegment,
+			":",
+		) {
 			continue
 		}
 
-		if strings.HasPrefix(normalizedSegment, "{") {
+		if strings.HasPrefix(
+			normalizedSegment,
+			"{",
+		) {
 			continue
 		}
 
@@ -223,14 +322,18 @@ func extractModuleName(
 func extractEntityType(
 	routePath string,
 ) string {
-	return extractModuleName(routePath)
+	return extractModuleName(
+		routePath,
+	)
 }
 
 func extractActionName(
 	method string,
 ) string {
 	switch strings.ToUpper(
-		strings.TrimSpace(method),
+		strings.TrimSpace(
+			method,
+		),
 	) {
 	case http.MethodPost:
 		return "CREATE"
@@ -249,7 +352,9 @@ func extractActionName(
 
 	default:
 		return strings.ToUpper(
-			strings.TrimSpace(method),
+			strings.TrimSpace(
+				method,
+			),
 		)
 	}
 }
@@ -257,6 +362,10 @@ func extractActionName(
 func extractEntityID(
 	c *gin.Context,
 ) *uuid.UUID {
+	if c == nil {
+		return nil
+	}
+
 	parameterNames := []string{
 		"id",
 		"user_id",
@@ -279,6 +388,7 @@ func extractEntityID(
 		}
 
 		parsedID, err := uuid.Parse(value)
+
 		if err == nil {
 			return &parsedID
 		}
@@ -301,7 +411,9 @@ func determineRiskLevel(
 	}
 
 	switch strings.ToUpper(
-		strings.TrimSpace(method),
+		strings.TrimSpace(
+			method,
+		),
 	) {
 	case http.MethodDelete:
 		return RiskLevelHigh
@@ -328,7 +440,10 @@ func buildFailureReason(
 		return trimmedErrorMessage
 	}
 
-	statusText := http.StatusText(statusCode)
+	statusText := http.StatusText(
+		statusCode,
+	)
+
 	if strings.TrimSpace(statusText) == "" {
 		statusText = "Request failed"
 	}
@@ -348,7 +463,9 @@ func buildDescription(
 	return fmt.Sprintf(
 		"%s request to %s completed with HTTP status %d",
 		strings.ToUpper(
-			strings.TrimSpace(method),
+			strings.TrimSpace(
+				method,
+			),
 		),
 		routePath,
 		statusCode,
@@ -359,7 +476,9 @@ func splitRoutePath(
 	routePath string,
 ) []string {
 	trimmedPath := strings.Trim(
-		strings.TrimSpace(routePath),
+		strings.TrimSpace(
+			routePath,
+		),
 		"/",
 	)
 
@@ -371,4 +490,76 @@ func splitRoutePath(
 		trimmedPath,
 		"/",
 	)
+}
+
+func detectDeviceName(
+	userAgent string,
+) string {
+	normalizedUserAgent := strings.ToLower(
+		strings.TrimSpace(
+			userAgent,
+		),
+	)
+
+	switch {
+	case normalizedUserAgent == "":
+		return "Unknown Device"
+
+	case strings.Contains(
+		normalizedUserAgent,
+		"postman",
+	):
+		return "Postman"
+
+	case strings.Contains(
+		normalizedUserAgent,
+		"insomnia",
+	):
+		return "Insomnia"
+
+	case strings.Contains(
+		normalizedUserAgent,
+		"curl",
+	):
+		return "cURL"
+
+	case strings.Contains(
+		normalizedUserAgent,
+		"android",
+	):
+		return "Android Device"
+
+	case strings.Contains(
+		normalizedUserAgent,
+		"iphone",
+	):
+		return "iPhone"
+
+	case strings.Contains(
+		normalizedUserAgent,
+		"ipad",
+	):
+		return "iPad"
+
+	case strings.Contains(
+		normalizedUserAgent,
+		"windows",
+	):
+		return "Windows Device"
+
+	case strings.Contains(
+		normalizedUserAgent,
+		"macintosh",
+	):
+		return "Mac Device"
+
+	case strings.Contains(
+		normalizedUserAgent,
+		"linux",
+	):
+		return "Linux Device"
+
+	default:
+		return "Unknown Device"
+	}
 }

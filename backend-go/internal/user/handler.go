@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -60,8 +61,10 @@ func (h *Handler) CreateUser(c *gin.Context) {
 		return
 	}
 
+	requestContext := buildAuditRequestContext(c)
+
 	createdUser, err := h.service.CreateUser(
-		c.Request.Context(),
+		requestContext,
 		organizationID,
 		assignedBy,
 		request,
@@ -117,10 +120,23 @@ func getUUIDFromContext(
 
 	switch typedValue := value.(type) {
 	case uuid.UUID:
+		if typedValue == uuid.Nil {
+			return uuid.Nil, false
+		}
+
 		return typedValue, true
 
+	case *uuid.UUID:
+		if typedValue == nil || *typedValue == uuid.Nil {
+			return uuid.Nil, false
+		}
+
+		return *typedValue, true
+
 	case string:
-		parsedValue, err := uuid.Parse(typedValue)
+		parsedValue, err := uuid.Parse(
+			strings.TrimSpace(typedValue),
+		)
 		if err != nil {
 			return uuid.Nil, false
 		}
@@ -131,6 +147,111 @@ func getUUIDFromContext(
 		return uuid.Nil, false
 	}
 }
+
+func buildAuditRequestContext(
+	c *gin.Context,
+) context.Context {
+	deviceName := strings.TrimSpace(
+		c.GetHeader("X-Device-Name"),
+	)
+
+	userAgent := strings.TrimSpace(
+		c.Request.UserAgent(),
+	)
+
+	if deviceName == "" {
+		deviceName = detectDeviceName(userAgent)
+	}
+
+	var sessionID *uuid.UUID
+
+	if tokenID, ok := getUUIDFromContext(
+		c,
+		"token_id",
+	); ok {
+		sessionID = &tokenID
+	} else if value, ok := getUUIDFromContext(
+		c,
+		"session_id",
+	); ok {
+		sessionID = &value
+	} else if value, ok := getUUIDFromContext(
+		c,
+		"jti",
+	); ok {
+		sessionID = &value
+	}
+
+	return auditlog.WithRequestDetails(
+		c.Request.Context(),
+		strings.TrimSpace(c.ClientIP()),
+		deviceName,
+		userAgent,
+		sessionID,
+	)
+}
+
+func detectDeviceName(
+	userAgent string,
+) string {
+	normalizedUserAgent := strings.ToLower(
+		strings.TrimSpace(userAgent),
+	)
+
+	switch {
+	case strings.Contains(
+		normalizedUserAgent,
+		"postmanruntime",
+	):
+		return "Postman"
+
+	case strings.Contains(
+		normalizedUserAgent,
+		"insomnia",
+	):
+		return "Insomnia"
+
+	case strings.Contains(
+		normalizedUserAgent,
+		"android",
+	):
+		return "Android Device"
+
+	case strings.Contains(
+		normalizedUserAgent,
+		"iphone",
+	):
+		return "iPhone"
+
+	case strings.Contains(
+		normalizedUserAgent,
+		"ipad",
+	):
+		return "iPad"
+
+	case strings.Contains(
+		normalizedUserAgent,
+		"windows",
+	):
+		return "Windows Device"
+
+	case strings.Contains(
+		normalizedUserAgent,
+		"macintosh",
+	):
+		return "Mac Device"
+
+	case strings.Contains(
+		normalizedUserAgent,
+		"linux",
+	):
+		return "Linux Device"
+
+	default:
+		return "Unknown Device"
+	}
+}
+
 func (h *Handler) ListUsers(c *gin.Context) {
 	var req ListUsersRequest
 
@@ -355,8 +476,10 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 		return
 	}
 
+	requestContext := buildAuditRequestContext(c)
+
 	updatedUser, err := h.service.UpdateUser(
-		c.Request.Context(),
+		requestContext,
 		organizationID,
 		updatedBy,
 		userID,

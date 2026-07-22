@@ -35,6 +35,7 @@ func SetupRouter(
 	// Audit log dependencies
 	auditRepository := auditlog.NewRepository(db.Pool)
 	auditService := auditlog.NewService(auditRepository)
+	auditHandler := auditlog.NewHandler(auditService)
 
 	// Permission dependencies
 	permissionRepository := permission.NewRepository(db.Pool)
@@ -93,6 +94,16 @@ func SetupRouter(
 	authGroup := v1.Group("/auth")
 	{
 		authGroup.POST("/login", authHandler.Login)
+
+		authGroup.POST(
+			"/refresh",
+			authHandler.RefreshAccessToken,
+		)
+
+		authGroup.POST(
+			"/revoke-refresh-token",
+			authHandler.RevokeRefreshToken,
+		)
 	}
 
 	// Protected routes
@@ -103,232 +114,281 @@ func SetupRouter(
 	)
 
 	protected.Use(
+		middleware.ValidateSession(authRepository),
+	)
+
+	protected.Use(
 		auditlog.Middleware(auditService),
 	)
 
 	{
 		protected.GET("/profile", authHandler.Profile)
 
-		admin := protected.Group("/admin")
 		{
-			admin.GET(
-				"/dashboard",
-				middleware.RequirePermission(
-					db.Pool,
-					"DASHBOARD_VIEW",
-				),
-				func(c *gin.Context) {
-					c.JSON(http.StatusOK, gin.H{
-						"success": true,
-						"message": "Welcome to Security Dashboard",
-					})
-				},
+			protected.POST(
+				"/auth/logout",
+				authHandler.Logout,
 			)
 
-			// User management routes
-			admin.POST(
-				"/users",
-				middleware.RequirePermission(
-					db.Pool,
-					"USER_CREATE",
-				),
-				userHandler.CreateUser,
+			protected.POST(
+				"/auth/logout-all",
+				authHandler.LogoutAllSessions,
 			)
 
-			admin.GET(
-				"/users",
-				middleware.RequirePermission(
-					db.Pool,
-					"USER_VIEW",
-				),
-				userHandler.ListUsers,
+			protected.POST(
+				"/change-password",
+				authHandler.ChangePassword,
 			)
 
-			admin.GET(
-				"/users/:id",
-				middleware.RequirePermission(
-					db.Pool,
-					"USER_VIEW_DETAILS",
-				),
-				userHandler.GetUserByID,
+			protected.POST(
+				"/auth/forgot-password",
+				authHandler.ForgotPassword,
 			)
 
-			admin.PUT(
-				"/users/:id",
-				middleware.RequirePermission(
-					db.Pool,
-					"USER_UPDATE",
-				),
-				userHandler.UpdateUser,
+			protected.POST(
+				"/auth/reset-password",
+				authHandler.ResetPassword,
 			)
 
-			// Role management routes
-			admin.POST(
-				"/roles",
-				middleware.RequirePermission(
-					db.Pool,
-					"ROLE_CREATE",
-				),
-				roleHandler.CreateRole,
-			)
+			admin := protected.Group("/admin")
+			{
+				admin.GET(
+					"/dashboard",
+					middleware.RequirePermission(
+						db.Pool,
+						"DASHBOARD_VIEW",
+					),
+					func(c *gin.Context) {
+						c.JSON(http.StatusOK, gin.H{
+							"success": true,
+							"message": "Welcome to Security Dashboard",
+						})
+					},
+				)
 
-			admin.GET(
-				"/roles",
-				middleware.RequirePermission(
-					db.Pool,
-					"ROLE_VIEW",
-				),
-				roleHandler.ListRoles,
-			)
+				// User management routes
+				admin.POST(
+					"/users",
+					middleware.RequirePermission(
+						db.Pool,
+						"USER_CREATE",
+					),
+					userHandler.CreateUser,
+				)
 
-			admin.GET(
-				"/roles/:id",
-				middleware.RequirePermission(
-					db.Pool,
-					"ROLE_VIEW",
-				),
-				roleHandler.GetRoleByID,
-			)
+				admin.GET(
+					"/users",
+					middleware.RequirePermission(
+						db.Pool,
+						"USER_VIEW",
+					),
+					userHandler.ListUsers,
+				)
 
-			admin.PUT(
-				"/roles/:id",
-				middleware.RequirePermission(
-					db.Pool,
-					"ROLE_UPDATE",
-				),
-				roleHandler.UpdateRole,
-			)
+				admin.GET(
+					"/users/:id",
+					middleware.RequirePermission(
+						db.Pool,
+						"USER_VIEW_DETAILS",
+					),
+					userHandler.GetUserByID,
+				)
 
-			admin.DELETE(
-				"/roles/:id",
-				middleware.RequirePermission(
-					db.Pool,
-					"ROLE_DELETE",
-				),
-				roleHandler.DeleteRole,
-			)
+				admin.PUT(
+					"/users/:id",
+					middleware.RequirePermission(
+						db.Pool,
+						"USER_UPDATE",
+					),
+					userHandler.UpdateUser,
+				)
 
-			// Permission management routes
-			admin.POST(
-				"/permissions",
-				middleware.RequirePermission(
-					db.Pool,
-					"PERMISSION_CREATE",
-				),
-				permissionHandler.CreatePermission,
-			)
+				// Role management routes
+				admin.POST(
+					"/roles",
+					middleware.RequirePermission(
+						db.Pool,
+						"ROLE_CREATE",
+					),
+					roleHandler.CreateRole,
+				)
 
-			admin.GET(
-				"/permissions",
-				middleware.RequirePermission(
-					db.Pool,
-					"PERMISSION_VIEW",
-				),
-				permissionHandler.ListPermissions,
-			)
+				admin.GET(
+					"/roles",
+					middleware.RequirePermission(
+						db.Pool,
+						"ROLE_VIEW",
+					),
+					roleHandler.ListRoles,
+				)
 
-			admin.GET(
-				"/permissions/:id",
-				middleware.RequirePermission(
-					db.Pool,
-					"PERMISSION_VIEW",
-				),
-				permissionHandler.GetPermissionByID,
-			)
+				admin.GET(
+					"/roles/:id",
+					middleware.RequirePermission(
+						db.Pool,
+						"ROLE_VIEW",
+					),
+					roleHandler.GetRoleByID,
+				)
 
-			admin.PUT(
-				"/permissions/:id",
-				middleware.RequirePermission(
-					db.Pool,
-					"PERMISSION_UPDATE",
-				),
-				permissionHandler.UpdatePermission,
-			)
+				admin.PUT(
+					"/roles/:id",
+					middleware.RequirePermission(
+						db.Pool,
+						"ROLE_UPDATE",
+					),
+					roleHandler.UpdateRole,
+				)
 
-			admin.DELETE(
-				"/permissions/:id",
-				middleware.RequirePermission(
-					db.Pool,
-					"PERMISSION_DISABLE",
-				),
-				permissionHandler.DeletePermission,
-			)
+				admin.DELETE(
+					"/roles/:id",
+					middleware.RequirePermission(
+						db.Pool,
+						"ROLE_DELETE",
+					),
+					roleHandler.DeleteRole,
+				)
 
-			// Role permission management routes
-			admin.POST(
-				"/roles/:id/permissions",
-				middleware.RequirePermission(
-					db.Pool,
-					"ROLE_MANAGE_PERMISSIONS",
-				),
-				rolePermissionHandler.AssignPermissions,
-			)
+				// Permission management routes
+				admin.POST(
+					"/permissions",
+					middleware.RequirePermission(
+						db.Pool,
+						"PERMISSION_CREATE",
+					),
+					permissionHandler.CreatePermission,
+				)
 
-			admin.GET(
-				"/roles/:id/permissions",
-				middleware.RequirePermission(
-					db.Pool,
-					"ROLE_VIEW_PERMISSIONS",
-				),
-				rolePermissionHandler.ListRolePermissions,
-			)
+				admin.GET(
+					"/permissions",
+					middleware.RequirePermission(
+						db.Pool,
+						"PERMISSION_VIEW",
+					),
+					permissionHandler.ListPermissions,
+				)
 
-			admin.DELETE(
-				"/roles/:id/permissions",
-				middleware.RequirePermission(
-					db.Pool,
-					"ROLE_MANAGE_PERMISSIONS",
-				),
-				rolePermissionHandler.RemovePermission,
-			)
+				admin.GET(
+					"/permissions/:id",
+					middleware.RequirePermission(
+						db.Pool,
+						"PERMISSION_VIEW",
+					),
+					permissionHandler.GetPermissionByID,
+				)
 
-			admin.PUT(
-				"/roles/:id/permissions",
-				middleware.RequirePermission(
-					db.Pool,
-					"ROLE_MANAGE_PERMISSIONS",
-				),
-				rolePermissionHandler.ReplacePermissions,
-			)
+				admin.PUT(
+					"/permissions/:id",
+					middleware.RequirePermission(
+						db.Pool,
+						"PERMISSION_UPDATE",
+					),
+					permissionHandler.UpdatePermission,
+				)
 
-			// User role management routes
-			admin.POST(
-				"/users/:id/roles",
-				middleware.RequirePermission(
-					db.Pool,
-					"ROLE_ASSIGN",
-				),
-				userRoleHandler.AssignRoles,
-			)
+				admin.DELETE(
+					"/permissions/:id",
+					middleware.RequirePermission(
+						db.Pool,
+						"PERMISSION_DISABLE",
+					),
+					permissionHandler.DeletePermission,
+				)
 
-			admin.GET(
-				"/users/:id/roles",
-				middleware.RequirePermission(
-					db.Pool,
-					"ROLE_VIEW",
-				),
-				userRoleHandler.ListUserRoles,
-			)
+				// Role permission management routes
+				admin.POST(
+					"/roles/:id/permissions",
+					middleware.RequirePermission(
+						db.Pool,
+						"ROLE_MANAGE_PERMISSIONS",
+					),
+					rolePermissionHandler.AssignPermissions,
+				)
 
-			admin.DELETE(
-				"/users/:id/roles",
-				middleware.RequirePermission(
-					db.Pool,
-					"ROLE_REVOKE",
-				),
-				userRoleHandler.RemoveRole,
-			)
+				admin.GET(
+					"/roles/:id/permissions",
+					middleware.RequirePermission(
+						db.Pool,
+						"ROLE_VIEW_PERMISSIONS",
+					),
+					rolePermissionHandler.ListRolePermissions,
+				)
 
-			admin.PUT(
-				"/users/:id/roles",
-				middleware.RequirePermission(
-					db.Pool,
-					"ROLE_ASSIGN",
-				),
-				userRoleHandler.ReplaceRoles,
-			)
+				admin.DELETE(
+					"/roles/:id/permissions",
+					middleware.RequirePermission(
+						db.Pool,
+						"ROLE_MANAGE_PERMISSIONS",
+					),
+					rolePermissionHandler.RemovePermission,
+				)
+
+				admin.PUT(
+					"/roles/:id/permissions",
+					middleware.RequirePermission(
+						db.Pool,
+						"ROLE_MANAGE_PERMISSIONS",
+					),
+					rolePermissionHandler.ReplacePermissions,
+				)
+
+				// User role management routes
+				admin.POST(
+					"/users/:id/roles",
+					middleware.RequirePermission(
+						db.Pool,
+						"ROLE_ASSIGN",
+					),
+					userRoleHandler.AssignRoles,
+				)
+
+				admin.GET(
+					"/users/:id/roles",
+					middleware.RequirePermission(
+						db.Pool,
+						"ROLE_VIEW",
+					),
+					userRoleHandler.ListUserRoles,
+				)
+
+				admin.DELETE(
+					"/users/:id/roles",
+					middleware.RequirePermission(
+						db.Pool,
+						"ROLE_REVOKE",
+					),
+					userRoleHandler.RemoveRole,
+				)
+
+				admin.PUT(
+					"/users/:id/roles",
+					middleware.RequirePermission(
+						db.Pool,
+						"ROLE_ASSIGN",
+					),
+					userRoleHandler.ReplaceRoles,
+				)
+
+				admin.GET(
+					"/audit-logs",
+					middleware.RequirePermission(
+						db.Pool,
+						"AUDIT_VIEW",
+					),
+					auditHandler.ListAuditLogs,
+				)
+
+				admin.GET(
+					"/audit-logs/:id",
+					middleware.RequirePermission(
+						db.Pool,
+						"AUDIT_VIEW",
+					),
+					auditHandler.GetAuditLogByID,
+				)
+			}
 		}
-	}
 
-	return router
+		return router
+	}
 }

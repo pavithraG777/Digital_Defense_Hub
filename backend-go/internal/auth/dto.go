@@ -30,6 +30,23 @@ type UserResponse struct {
 	MFAEnabled         bool     `json:"mfa_enabled"`
 	Roles              []string `json:"roles"`
 }
+
+// ChangePasswordRequest contains the current password,
+// new password, and confirmation password.
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password" binding:"required,min=8"`
+	NewPassword     string `json:"new_password" binding:"required,min=8,max=128"`
+	ConfirmPassword string `json:"confirm_password" binding:"required,min=8,max=128"`
+}
+
+// ChangePasswordResponse confirms that the password was changed
+// and all existing sessions were terminated.
+type ChangePasswordResponse struct {
+	PasswordChanged    bool `json:"password_changed"`
+	SessionsTerminated bool `json:"sessions_terminated"`
+	LoginRequired      bool `json:"login_required"`
+}
+
 type ListUsersRequest struct {
 	Page          int    `form:"page"`
 	Limit         int    `form:"limit"`

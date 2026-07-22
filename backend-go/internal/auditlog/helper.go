@@ -2,96 +2,144 @@ package auditlog
 
 import (
 	"context"
+	"strings"
 
 	"github.com/google/uuid"
 )
 
-type LogRequest struct {
-	OrganizationID *uuid.UUID
-	UserID         *uuid.UUID
-	SessionID      *uuid.UUID
+type requestContextKey string
 
-	ModuleName string
-	ActionName string
+const (
+	contextKeyIPAddress  requestContextKey = "audit_ip_address"
+	contextKeyDeviceName requestContextKey = "audit_device_name"
+	contextKeyUserAgent  requestContextKey = "audit_user_agent"
+	contextKeySessionID  requestContextKey = "audit_session_id"
+)
 
-	EntityType string
-	EntityID   *uuid.UUID
-
-	Description string
-
-	OldValues map[string]any
-	NewValues map[string]any
-	Metadata  map[string]any
-
-	RiskLevel string
-
-	FailureReason string
-}
-
-func (s *Service) LogSuccess(
+func WithRequestDetails(
 	ctx context.Context,
-	request LogRequest,
-) {
-	if s == nil {
-		return
+	ipAddress string,
+	deviceName string,
+	userAgent string,
+	sessionID *uuid.UUID,
+) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
-	_ = s.Log(
+	ctx = context.WithValue(
 		ctx,
-		&AuditLog{
-			OrganizationID: request.OrganizationID,
-			UserID:         request.UserID,
-			SessionID:      request.SessionID,
-
-			ModuleName: request.ModuleName,
-			ActionName: request.ActionName,
-
-			EntityType: request.EntityType,
-			EntityID:   request.EntityID,
-
-			Description: request.Description,
-
-			OldValues: request.OldValues,
-			NewValues: request.NewValues,
-			Metadata:  request.Metadata,
-
-			ResultStatus: ResultStatusSuccess,
-			RiskLevel:    request.RiskLevel,
-		},
+		contextKeyIPAddress,
+		strings.TrimSpace(ipAddress),
 	)
-}
 
-func (s *Service) LogFailure(
-	ctx context.Context,
-	request LogRequest,
-) {
-	if s == nil {
-		return
+	ctx = context.WithValue(
+		ctx,
+		contextKeyDeviceName,
+		strings.TrimSpace(deviceName),
+	)
+
+	ctx = context.WithValue(
+		ctx,
+		contextKeyUserAgent,
+		strings.TrimSpace(userAgent),
+	)
+
+	if sessionID != nil {
+		ctx = context.WithValue(
+			ctx,
+			contextKeySessionID,
+			*sessionID,
+		)
 	}
 
-	_ = s.Log(
-		ctx,
-		&AuditLog{
-			OrganizationID: request.OrganizationID,
-			UserID:         request.UserID,
-			SessionID:      request.SessionID,
+	return ctx
+}
 
-			ModuleName: request.ModuleName,
-			ActionName: request.ActionName,
+func GetRequestIPAddress(
+	ctx context.Context,
+) string {
+	if ctx == nil {
+		return ""
+	}
 
-			EntityType: request.EntityType,
-			EntityID:   request.EntityID,
+	value, ok := ctx.Value(
+		contextKeyIPAddress,
+	).(string)
 
-			Description: request.Description,
+	if !ok {
+		return ""
+	}
 
-			OldValues: request.OldValues,
-			NewValues: request.NewValues,
-			Metadata:  request.Metadata,
+	return strings.TrimSpace(value)
+}
 
-			ResultStatus: ResultStatusFailed,
-			RiskLevel:    request.RiskLevel,
+func GetRequestDeviceName(
+	ctx context.Context,
+) string {
+	if ctx == nil {
+		return ""
+	}
 
-			FailureReason: request.FailureReason,
-		},
+	value, ok := ctx.Value(
+		contextKeyDeviceName,
+	).(string)
+
+	if !ok {
+		return ""
+	}
+
+	return strings.TrimSpace(value)
+}
+
+func GetRequestUserAgent(
+	ctx context.Context,
+) string {
+	if ctx == nil {
+		return ""
+	}
+
+	value, ok := ctx.Value(
+		contextKeyUserAgent,
+	).(string)
+
+	if !ok {
+		return ""
+	}
+
+	return strings.TrimSpace(value)
+}
+
+func GetRequestSessionID(
+	ctx context.Context,
+) *uuid.UUID {
+	if ctx == nil {
+		return nil
+	}
+
+	value := ctx.Value(
+		contextKeySessionID,
 	)
+
+	switch typedValue := value.(type) {
+	case uuid.UUID:
+		id := typedValue
+		return &id
+
+	case *uuid.UUID:
+		return typedValue
+
+	case string:
+		parsedID, err := uuid.Parse(
+			strings.TrimSpace(typedValue),
+		)
+		if err != nil {
+			return nil
+		}
+
+		return &parsedID
+
+	default:
+		return nil
+	}
 }

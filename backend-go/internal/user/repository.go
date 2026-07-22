@@ -46,6 +46,7 @@ func (r *Repository) CreateUser(
 		_ = tx.Rollback(ctx)
 	}()
 
+	// Validate the selected role.
 	if err := r.validateRole(
 		ctx,
 		tx,
@@ -55,6 +56,7 @@ func (r *Repository) CreateUser(
 		return nil, err
 	}
 
+	// Check whether the username already exists.
 	var usernameExists bool
 
 	err = tx.QueryRow(
@@ -83,6 +85,7 @@ func (r *Repository) CreateUser(
 		return nil, ErrUsernameAlreadyExists
 	}
 
+	// Check whether the official email already exists.
 	var emailExists bool
 
 	err = tx.QueryRow(
@@ -113,6 +116,7 @@ func (r *Repository) CreateUser(
 
 	userID := uuid.New()
 
+	// Step 1: Create the user account first.
 	_, err = tx.Exec(
 		ctx,
 		`
@@ -152,6 +156,7 @@ func (r *Repository) CreateUser(
 		)
 	}
 
+	// Prepare the display name.
 	displayName := request.FirstName
 
 	if request.DisplayName != nil &&
@@ -162,6 +167,7 @@ func (r *Repository) CreateUser(
 		displayName = request.FirstName + " " + *request.LastName
 	}
 
+	// Step 2: Create the user profile.
 	_, err = tx.Exec(
 		ctx,
 		`
@@ -203,24 +209,33 @@ func (r *Repository) CreateUser(
 		)
 	}
 
+	// Step 3: Assign the selected role to the created user.
 	_, err = tx.Exec(
 		ctx,
 		`
 		INSERT INTO user_roles (
 			user_id,
 			role_id,
-			assigned_by,
+			granted_by,
 			assignment_reason,
+			granted_at,
+			valid_from,
+			expires_at,
 			is_primary,
-			status
+			status,
+			is_active
 		)
 		VALUES (
 			$1,
 			$2,
 			$3,
 			$4,
+			CURRENT_TIMESTAMP,
+			CURRENT_TIMESTAMP,
+			NULL,
 			TRUE,
-			'ACTIVE'
+			'ACTIVE',
+			TRUE
 		)
 		`,
 		userID,
@@ -236,6 +251,7 @@ func (r *Repository) CreateUser(
 		)
 	}
 
+	// Save all database operations.
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf(
 			"failed to commit user transaction: %w",
@@ -253,7 +269,6 @@ func (r *Repository) CreateUser(
 		RoleID:         request.RoleID,
 	}, nil
 }
-
 func (r *Repository) validateRole(
 	ctx context.Context,
 	tx pgx.Tx,

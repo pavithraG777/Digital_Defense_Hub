@@ -167,6 +167,163 @@ func (r *Repository) Create(
 	return nil
 }
 
+func (r *Repository) List(
+	ctx context.Context,
+) ([]AuditLog, error) {
+
+	const query = `
+	SELECT
+		id,
+		organization_id,
+		user_id,
+		session_id,
+		module_name,
+		action_name,
+		entity_type,
+		entity_id,
+		description,
+		old_values,
+		new_values,
+		metadata,
+		COALESCE(ip_address::text, ''),
+		COALESCE(device_name, ''),
+		COALESCE(user_agent, ''),
+		result_status,
+		risk_level,
+		COALESCE(failure_reason, ''),
+		occurred_at,
+		created_at
+	FROM audit_logs
+	ORDER BY occurred_at DESC
+`
+
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var auditLogs []AuditLog
+
+	for rows.Next() {
+
+		var auditLog AuditLog
+
+		var oldValues []byte
+		var newValues []byte
+		var metadata []byte
+
+		err := rows.Scan(
+			&auditLog.ID,
+			&auditLog.OrganizationID,
+			&auditLog.UserID,
+			&auditLog.SessionID,
+			&auditLog.ModuleName,
+			&auditLog.ActionName,
+			&auditLog.EntityType,
+			&auditLog.EntityID,
+			&auditLog.Description,
+			&oldValues,
+			&newValues,
+			&metadata,
+			&auditLog.IPAddress,
+			&auditLog.DeviceName,
+			&auditLog.UserAgent,
+			&auditLog.ResultStatus,
+			&auditLog.RiskLevel,
+			&auditLog.FailureReason,
+			&auditLog.OccurredAt,
+			&auditLog.CreatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		_ = json.Unmarshal(oldValues, &auditLog.OldValues)
+		_ = json.Unmarshal(newValues, &auditLog.NewValues)
+		_ = json.Unmarshal(metadata, &auditLog.Metadata)
+
+		auditLogs = append(auditLogs, auditLog)
+	}
+
+	return auditLogs, nil
+}
+
+func (r *Repository) GetByID(
+	ctx context.Context,
+	id string,
+) (*AuditLog, error) {
+
+	const query = `
+	SELECT
+		id,
+		organization_id,
+		user_id,
+		session_id,
+		module_name,
+		action_name,
+		entity_type,
+		entity_id,
+		description,
+		old_values,
+		new_values,
+		metadata,
+		COALESCE(ip_address::text, ''),
+		COALESCE(device_name, ''),
+		COALESCE(user_agent, ''),
+		result_status,
+		risk_level,
+		COALESCE(failure_reason, ''),
+		occurred_at,
+		created_at
+	FROM audit_logs
+	WHERE id = $1
+`
+
+	var auditLog AuditLog
+
+	var oldValues []byte
+	var newValues []byte
+	var metadata []byte
+
+	err := r.db.QueryRow(
+		ctx,
+		query,
+		id,
+	).Scan(
+		&auditLog.ID,
+		&auditLog.OrganizationID,
+		&auditLog.UserID,
+		&auditLog.SessionID,
+		&auditLog.ModuleName,
+		&auditLog.ActionName,
+		&auditLog.EntityType,
+		&auditLog.EntityID,
+		&auditLog.Description,
+		&oldValues,
+		&newValues,
+		&metadata,
+		&auditLog.IPAddress,
+		&auditLog.DeviceName,
+		&auditLog.UserAgent,
+		&auditLog.ResultStatus,
+		&auditLog.RiskLevel,
+		&auditLog.FailureReason,
+		&auditLog.OccurredAt,
+		&auditLog.CreatedAt,
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	_ = json.Unmarshal(oldValues, &auditLog.OldValues)
+	_ = json.Unmarshal(newValues, &auditLog.NewValues)
+	_ = json.Unmarshal(metadata, &auditLog.Metadata)
+
+	return &auditLog, nil
+}
+
 func marshalJSON(
 	value map[string]any,
 ) ([]byte, error) {

@@ -25,6 +25,7 @@ type Claims struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	Username       string    `json:"username"`
 	Roles          []string  `json:"roles"`
+
 	jwt.RegisteredClaims
 }
 
@@ -55,8 +56,21 @@ func NewJWTManager(
 func (m *JWTManager) GenerateAccessToken(
 	user *User,
 	roles []string,
+	sessionID uuid.UUID,
 ) (string, time.Time, error) {
-	now := time.Now()
+	if user == nil {
+		return "", time.Time{}, fmt.Errorf(
+			"user is required",
+		)
+	}
+
+	if sessionID == uuid.Nil {
+		return "", time.Time{}, fmt.Errorf(
+			"session ID is required",
+		)
+	}
+
+	now := time.Now().UTC()
 	expiresAt := now.Add(m.tokenDuration)
 
 	claims := Claims{
@@ -64,8 +78,9 @@ func (m *JWTManager) GenerateAccessToken(
 		OrganizationID: user.OrganizationID,
 		Username:       user.Username,
 		Roles:          roles,
+
 		RegisteredClaims: jwt.RegisteredClaims{
-			ID:        uuid.NewString(),
+			ID:        sessionID.String(),
 			Issuer:    m.issuer,
 			Subject:   user.ID.String(),
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -74,9 +89,14 @@ func (m *JWTManager) GenerateAccessToken(
 		},
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	token := jwt.NewWithClaims(
+		jwt.SigningMethodHS256,
+		claims,
+	)
 
-	signedToken, err := token.SignedString(m.secretKey)
+	signedToken, err := token.SignedString(
+		m.secretKey,
+	)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf(
 			"failed to sign access token: %w",
@@ -114,7 +134,11 @@ func (m *JWTManager) ValidateAccessToken(
 			return nil, ErrExpiredToken
 		}
 
-		return nil, fmt.Errorf("%w: %v", ErrInvalidToken, err)
+		return nil, fmt.Errorf(
+			"%w: %v",
+			ErrInvalidToken,
+			err,
+		)
 	}
 
 	if !token.Valid {
