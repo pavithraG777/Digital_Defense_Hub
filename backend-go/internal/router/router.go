@@ -1,10 +1,16 @@
 package router
 
 import (
+	"encoding/base64"
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/spf13/viper"
 
+	honeytoken "github.com/pavithraG777/cyber-security-platform/backend/internal/HoneyToken"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/auditlog"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/auth"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/config"
@@ -85,6 +91,17 @@ func SetupRouter(
 	roleService := role.NewService(roleRepository)
 	roleHandler := role.NewHandler(roleService)
 
+	// Honeytoken security module dependencies
+	protectedFileHandler,
+		encryptionKeyHandler,
+		honeytokenHandler,
+		err := initializeHoneytokenModule(
+		db.Pool,
+	)
+	if err != nil {
+		panic(err)
+	}
+
 	api := router.Group("/api")
 	v1 := api.Group("/v1")
 
@@ -119,6 +136,24 @@ func SetupRouter(
 
 	protected.Use(
 		auditlog.Middleware(auditService),
+	)
+
+	honeytoken.RegisterRoutes(
+		protected,
+		protectedFileHandler,
+		db.Pool,
+	)
+
+	honeytoken.RegisterEncryptionKeyRoutes(
+		protected,
+		encryptionKeyHandler,
+		db.Pool,
+	)
+
+	honeytoken.RegisterHoneytokenRoutes(
+		protected,
+		honeytokenHandler,
+		db.Pool,
 	)
 
 	{
@@ -391,4 +426,124 @@ func SetupRouter(
 
 		return router
 	}
+}
+
+func initializeHoneytokenModule(
+	databasePool *pgxpool.Pool,
+) (
+	*honeytoken.Handler,
+	*honeytoken.EncryptionKeyHandler,
+	*honeytoken.HoneytokenHandler,
+	error,
+) {
+	if databasePool == nil {
+		return nil, nil, nil, fmt.Errorf(
+			"database pool is required for honeytoken module",
+		)
+	}
+
+	keyEncryptionMasterKey, err := decodeRequiredAES256Key(
+		"KEY_ENCRYPTION_MASTER_KEY",
+	)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	defer clear(keyEncryptionMasterKey)
+
+	honeytokenRepository := honeytoken.NewRepository(
+		databasePool,
+	)
+
+	encryptionKeyService, err := honeytoken.NewEncryptionKeyService(
+		honeytokenRepository,
+		keyEncryptionMasterKey,
+	)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf(
+			"failed to initialize encryption key service: %w",
+			err,
+		)
+	}
+
+	protectedFileService := honeytoken.NewProtectedFileService(
+		honeytokenRepository,
+		encryptionKeyService,
+	)
+
+	protectedFileHandler := honeytoken.NewHandler(
+		protectedFileService,
+	)
+
+	encryptionKeyHandler := honeytoken.NewEncryptionKeyHandler(
+		encryptionKeyService,
+	)
+
+	honeytokenGenerator, err := honeytoken.NewHoneytokenGenerator(
+		encryptionKeyService,
+	)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf(
+			"failed to initialize honeytoken generator: %w",
+			err,
+		)
+	}
+
+	honeytokenService, err := honeytoken.NewHoneytokenService(
+		honeytokenRepository,
+		honeytokenGenerator,
+	)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf(
+			"failed to initialize honeytoken service: %w",
+			err,
+		)
+	}
+
+	honeytokenHandler := honeytoken.NewHoneytokenHandler(
+		honeytokenService,
+	)
+
+	return protectedFileHandler,
+		encryptionKeyHandler,
+		honeytokenHandler,
+		nil
+}
+
+func decodeRequiredAES256Key(
+	configName string,
+) ([]byte, error) {
+	encodedKey := strings.TrimSpace(
+		viper.GetString(configName),
+	)
+	if encodedKey == "" {
+		return nil, fmt.Errorf(
+			"%s is required",
+			configName,
+		)
+	}
+
+	key, err := base64.StdEncoding.
+		Strict().
+		DecodeString(encodedKey)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"%s must be valid Base64: %w",
+			configName,
+			err,
+		)
+	}
+
+	const aes256KeySize = 32
+
+	if len(key) != aes256KeySize {
+		clear(key)
+
+		return nil, fmt.Errorf(
+			"%s must decode to exactly %d bytes",
+			configName,
+			aes256KeySize,
+		)
+	}
+
+	return key, nil
 }

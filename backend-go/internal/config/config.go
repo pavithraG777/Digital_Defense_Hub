@@ -107,8 +107,6 @@ func Load() (*Config, error) {
 		},
 	}
 
-	fmt.Println("JWT Secret:", cfg.JWT.Secret)
-	fmt.Println("JWT Secret Length:", len(cfg.JWT.Secret))
 	if err := validate(cfg); err != nil {
 		return nil, err
 	}

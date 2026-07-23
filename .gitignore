@@ -1,0 +1,50 @@
+# Environment secrets
+.env
+.env.*
+!.env.example
+backend-go/.env
+backend-go/.env.*
+!backend-go/.env.example
+
+# Cryptographic secrets
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Runtime security storage
+storage/*
+!storage/.gitkeep
+
+backend-go/storage/*
+!backend-go/storage/.gitkeep
+
+backend-go/uploads/*
+!backend-go/uploads/.gitkeep
+
+# Logs
+*.log
+
+# Go artifacts
+backend-go/bin/
+backend-go/tmp/
+backend-go/*.exe
+*.test
+coverage.out
+
+# React artifacts
+frontend-react/node_modules/
+frontend-react/dist/
+frontend-react/build/
+
+# Python artifacts
+ai-service-python/.venv/
+ai-service-python/venv/
+ai-service-python/__pycache__/
+*.pyc
+
+# IDE and operating system
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
