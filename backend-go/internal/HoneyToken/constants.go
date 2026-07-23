@@ -109,15 +109,58 @@ const (
 
 // File monitoring event types.
 const (
-	EventTypeCreated           = "CREATED"
-	EventTypeOpened            = "OPENED"
-	EventTypeRead              = "READ"
-	EventTypeModified          = "MODIFIED"
-	EventTypeRenamed           = "RENAMED"
-	EventTypeDeleted           = "DELETED"
-	EventTypeMoved             = "MOVED"
-	EventTypeExtensionChanged  = "EXTENSION_CHANGED"
-	EventTypePermissionChanged = "PERMISSION_CHANGED"
+	EventTypeCreated             = "CREATED"
+	EventTypeOpened              = "OPENED"
+	EventTypeRead                = "READ"
+	EventTypeCopied              = "COPIED"
+	EventTypeMoved               = "MOVED"
+	EventTypeRenamed             = "RENAMED"
+	EventTypeModified            = "MODIFIED"
+	EventTypeEncrypted           = "ENCRYPTED"
+	EventTypeDeleted             = "DELETED"
+	EventTypeExtensionChanged    = "EXTENSION_CHANGED"
+	EventTypePermissionChanged   = "PERMISSION_CHANGED"
+	EventTypeHashChanged         = "HASH_CHANGED"
+	EventTypeMultipleFileChanges = "MULTIPLE_FILE_CHANGES"
+	EventTypeCustom              = "CUSTOM"
+)
+
+// File event source resource types.
+const (
+	FileEventSourceProtectedFile = "PROTECTED_FILE"
+	FileEventSourceHoneytoken    = "HONEYTOKEN"
+	FileEventSourceCanaryFile    = "CANARY_FILE"
+	FileEventSourceUnmanagedFile = "UNMANAGED_FILE"
+)
+
+// File event collectors.
+const (
+	FileEventCollectorWindowsWatcher = "WINDOWS_WATCHER"
+	FileEventCollectorLinuxInotify   = "LINUX_INOTIFY"
+	FileEventCollectorMacOSFSEvents  = "MACOS_FSEVENTS"
+	FileEventCollectorAPI            = "API"
+	FileEventCollectorAgent          = "AGENT"
+	FileEventCollectorManual         = "MANUAL"
+	FileEventCollectorSystem         = "SYSTEM"
+)
+
+// File event detection methods.
+const (
+	DetectionMethodRuleBased      = "RULE_BASED"
+	DetectionMethodSignatureBased = "SIGNATURE_BASED"
+	DetectionMethodBehaviourBased = "BEHAVIOUR_BASED"
+	DetectionMethodAIBased        = "AI_BASED"
+	DetectionMethodHybrid         = "HYBRID"
+)
+
+// File event processing statuses.
+const (
+	FileEventStatusReceived   = "RECEIVED"
+	FileEventStatusQueued     = "QUEUED"
+	FileEventStatusProcessing = "PROCESSING"
+	FileEventStatusProcessed  = "PROCESSED"
+	FileEventStatusFailed     = "FAILED"
+	FileEventStatusIgnored    = "IGNORED"
 )
 
 // Threat levels.

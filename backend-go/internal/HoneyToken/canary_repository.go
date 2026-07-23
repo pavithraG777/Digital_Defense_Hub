@@ -22,6 +22,7 @@ var (
 	ErrCanaryHoneytokenNotFound       = errors.New("canary honeytoken not found in organization")
 	ErrCanaryOwnerNotFound            = errors.New("canary owner not found in organization")
 	ErrCanaryCreatorNotFound          = errors.New("canary creator not found in organization")
+	ErrCanaryFileNotMonitorable       = errors.New("canary file is not monitorable")
 )
 
 const canaryFileSelectColumns = `
@@ -465,6 +466,153 @@ func (r *Repository) DeployCanaryFile(
 	}
 
 	return canary, nil
+}
+
+// ListMonitorableCanaryFiles returns deployed Canary files watched by the
+// internal monitoring service across all organizations.
+func (r *Repository) ListMonitorableCanaryFiles(
+	ctx context.Context,
+) ([]CanaryFile, error) {
+	query := `
+		SELECT ` + canaryFileSelectColumns + `
+		FROM canary_files
+		WHERE
+			status IN ($1, $2, $3, $4)
+			AND deployed_at IS NOT NULL
+			AND deleted_at IS NULL
+			AND (
+				expires_at IS NULL
+				OR expires_at > CURRENT_TIMESTAMP
+			)
+		ORDER BY
+			organization_id,
+			id;
+	`
+
+	rows, err := r.db.Query(
+		ctx,
+		query,
+		CanaryStatusActive,
+		CanaryStatusTriggered,
+		CanaryStatusTampered,
+		CanaryStatusMissing,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to list monitorable canary files: %w",
+			err,
+		)
+	}
+	defer rows.Close()
+
+	canaryFiles := make([]CanaryFile, 0)
+
+	for rows.Next() {
+		canary, scanErr := scanCanaryFile(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf(
+				"failed to scan monitorable canary file: %w",
+				scanErr,
+			)
+		}
+
+		canaryFiles = append(canaryFiles, *canary)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf(
+			"failed while reading monitorable canary files: %w",
+			err,
+		)
+	}
+
+	return canaryFiles, nil
+}
+
+// RecordCanaryFileTrigger atomically updates Canary state whenever the
+// watcher detects modification, rename, removal or another suspicious event.
+func (r *Repository) RecordCanaryFileTrigger(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	canaryID uuid.UUID,
+	status string,
+) (*CanaryFile, error) {
+	if organizationID == uuid.Nil {
+		return nil, errors.New(
+			"organization ID is required",
+		)
+	}
+
+	if canaryID == uuid.Nil {
+		return nil, errors.New(
+			"canary file ID is required",
+		)
+	}
+
+	if !isCanaryTriggerStatus(status) {
+		return nil, errors.New(
+			"invalid canary trigger status",
+		)
+	}
+
+	query := `
+		UPDATE canary_files
+		SET
+			access_count = access_count + 1,
+			last_triggered_at = CURRENT_TIMESTAMP,
+			status = $3,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE
+			id = $1
+			AND organization_id = $2
+			AND status IN ($4, $5, $6, $7)
+			AND deleted_at IS NULL
+			AND (
+				expires_at IS NULL
+				OR expires_at > CURRENT_TIMESTAMP
+			)
+		RETURNING ` + canaryFileSelectColumns + `;
+	`
+
+	canary, err := scanCanaryFile(
+		r.db.QueryRow(
+			ctx,
+			query,
+			canaryID,
+			organizationID,
+			status,
+			CanaryStatusActive,
+			CanaryStatusTriggered,
+			CanaryStatusTampered,
+			CanaryStatusMissing,
+		),
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrCanaryFileNotMonitorable
+		}
+
+		return nil, fmt.Errorf(
+			"failed to record canary file trigger: %w",
+			err,
+		)
+	}
+
+	return canary, nil
+}
+
+func isCanaryTriggerStatus(
+	status string,
+) bool {
+	switch status {
+	case CanaryStatusTriggered,
+		CanaryStatusTampered,
+		CanaryStatusMissing:
+		return true
+
+	default:
+		return false
+	}
 }
 
 func normalizeCanaryFileListFilter(

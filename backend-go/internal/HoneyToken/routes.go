@@ -12,6 +12,7 @@ const (
 	encryptionKeysRoute = "/encryption-keys"
 	honeytokensRoute    = "/honeytokens"
 	canaryFilesRoute    = "/canary-files"
+	fileEventsRoute     = "/file-events"
 
 	permissionHoneytokenCreate           = "HONEYTOKEN_CREATE"
 	permissionHoneytokenView             = "HONEYTOKEN_VIEW"
@@ -248,6 +249,51 @@ func RegisterCanaryRoutes(
 	)
 }
 
+// RegisterFileEventRoutes adds authenticated forensic event ingestion
+// and timeline endpoints.
+func RegisterFileEventRoutes(
+	protectedRouter *gin.RouterGroup,
+	handler *FileEventHandler,
+	databasePool *pgxpool.Pool,
+) {
+	validateFileEventRouteDependencies(
+		protectedRouter,
+		handler,
+		databasePool,
+	)
+
+	fileEvents := protectedRouter.Group(
+		fileEventsRoute,
+	)
+
+	fileEvents.POST(
+		"",
+		middleware.RequirePermission(
+			databasePool,
+			permissionOrganizationManageSecurity,
+		),
+		handler.CreateFileEvent,
+	)
+
+	fileEvents.GET(
+		"",
+		middleware.RequirePermission(
+			databasePool,
+			permissionHoneytokenView,
+		),
+		handler.ListFileEvents,
+	)
+
+	fileEvents.GET(
+		"/:id",
+		middleware.RequirePermission(
+			databasePool,
+			permissionHoneytokenView,
+		),
+		handler.GetFileEvent,
+	)
+}
+
 func validateHoneytokenRouteDependencies(
 	protectedRouter *gin.RouterGroup,
 	handler *HoneytokenHandler,
@@ -287,5 +333,23 @@ func validateCanaryRouteDependencies(
 
 	if databasePool == nil {
 		panic("database pool is required for canary routes")
+	}
+}
+
+func validateFileEventRouteDependencies(
+	protectedRouter *gin.RouterGroup,
+	handler *FileEventHandler,
+	databasePool *pgxpool.Pool,
+) {
+	if protectedRouter == nil {
+		panic("protected router group is required")
+	}
+
+	if handler == nil || !handler.isAvailable() {
+		panic("file event handler is required")
+	}
+
+	if databasePool == nil {
+		panic("database pool is required for file event routes")
 	}
 }

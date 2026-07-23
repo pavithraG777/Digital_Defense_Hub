@@ -23,33 +23,51 @@ func main() {
 		log.Fatal(err)
 	}
 
-	if err := logger.Init(); err != nil {
+	if err = logger.Init(); err != nil {
 		log.Fatal(err)
 	}
 	defer logger.Sync()
 
 	db, err := database.Connect(cfg, logger.Log)
 	if err != nil {
-		logger.Log.Fatal(
+		logger.Log.Error(
 			"Database connection failed",
 			zap.Error(err),
 		)
+		return
 	}
 	defer db.Close(logger.Log)
 
-	r := router.SetupRouter(
-		db,
-		cfg,
-	)
+	httpRouter, fileMonitorService :=
+		router.SetupRouterWithRuntime(
+			db,
+			cfg,
+		)
+
+	monitorContext, cancelMonitor :=
+		context.WithCancel(context.Background())
+	defer cancelMonitor()
+
+	if err = fileMonitorService.Start(
+		monitorContext,
+	); err != nil {
+		logger.Log.Error(
+			"File monitor service failed to start",
+			zap.Error(err),
+		)
+		return
+	}
 
 	server := &http.Server{
 		Addr:              ":" + cfg.App.Port,
-		Handler:           r,
+		Handler:           httpRouter,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
+
+	serverErrors := make(chan error, 1)
 
 	go func() {
 		logger.Log.Info(
@@ -57,40 +75,66 @@ func main() {
 			zap.String("port", cfg.App.Port),
 		)
 
-		if err := server.ListenAndServe(); err != nil &&
-			!errors.Is(err, http.ErrServerClosed) {
-			logger.Log.Fatal(
-				"Server failed",
-				zap.Error(err),
-			)
-		}
+		serverErrors <- server.ListenAndServe()
 	}()
 
-	stop := make(chan os.Signal, 1)
+	signalContext, stopSignals :=
+		signal.NotifyContext(
+			context.Background(),
+			os.Interrupt,
+			syscall.SIGINT,
+			syscall.SIGTERM,
+		)
+	defer stopSignals()
 
-	signal.Notify(
-		stop,
-		syscall.SIGINT,
-		syscall.SIGTERM,
-	)
+	select {
+	case <-signalContext.Done():
+		logger.Log.Info(
+			"Shutdown signal received",
+		)
 
-	<-stop
+	case serverError := <-serverErrors:
+		if serverError != nil &&
+			!errors.Is(
+				serverError,
+				http.ErrServerClosed,
+			) {
+			logger.Log.Error(
+				"Server stopped unexpectedly",
+				zap.Error(serverError),
+			)
+		}
+	}
 
-	logger.Log.Info("Shutdown signal received")
+	shutdownContext, cancelShutdown :=
+		context.WithTimeout(
+			context.Background(),
+			10*time.Second,
+		)
+	defer cancelShutdown()
 
-	ctx, cancel := context.WithTimeout(
-		context.Background(),
-		10*time.Second,
-	)
-	defer cancel()
+	cancelMonitor()
 
-	if err := server.Shutdown(ctx); err != nil {
+	if err = fileMonitorService.Stop(
+		shutdownContext,
+	); err != nil {
 		logger.Log.Error(
-			"Graceful shutdown failed",
+			"File monitor shutdown failed",
+			zap.Error(err),
+		)
+	}
+
+	if err = server.Shutdown(
+		shutdownContext,
+	); err != nil {
+		logger.Log.Error(
+			"HTTP server graceful shutdown failed",
 			zap.Error(err),
 		)
 		return
 	}
 
-	logger.Log.Info("Server stopped gracefully")
+	logger.Log.Info(
+		"Server stopped gracefully",
+	)
 }

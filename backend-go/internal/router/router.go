@@ -1,6 +1,7 @@
 package router
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/config"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/database"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/health"
+	appLogger "github.com/pavithraG777/cyber-security-platform/backend/internal/logger"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/middleware"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/permission"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/role"
@@ -28,6 +30,28 @@ func SetupRouter(
 	db *database.Database,
 	cfg *config.Config,
 ) *gin.Engine {
+	configuredRouter, fileMonitorService :=
+		SetupRouterWithRuntime(db, cfg)
+
+	if err := fileMonitorService.Start(
+		context.Background(),
+	); err != nil {
+		panic(fmt.Errorf(
+			"failed to start file monitor service: %w",
+			err,
+		))
+	}
+
+	return configuredRouter
+}
+
+func SetupRouterWithRuntime(
+	db *database.Database,
+	cfg *config.Config,
+) (
+	*gin.Engine,
+	*honeytoken.FileMonitorService,
+) {
 	router := gin.New()
 
 	router.Use(gin.Logger())
@@ -95,6 +119,8 @@ func SetupRouter(
 		encryptionKeyHandler,
 		honeytokenHandler,
 		canaryHandler,
+		fileEventHandler,
+		fileMonitorService,
 		err := initializeHoneytokenModule(
 		db.Pool,
 		cfg.Storage.CanaryStoragePath,
@@ -161,6 +187,12 @@ func SetupRouter(
 	honeytoken.RegisterCanaryRoutes(
 		protected,
 		canaryHandler,
+		db.Pool,
+	)
+
+	honeytoken.RegisterFileEventRoutes(
+		protected,
+		fileEventHandler,
 		db.Pool,
 	)
 
@@ -432,7 +464,7 @@ func SetupRouter(
 			}
 		}
 
-		return router
+		return router, fileMonitorService
 	}
 }
 
@@ -445,10 +477,12 @@ func initializeHoneytokenModule(
 	*honeytoken.EncryptionKeyHandler,
 	*honeytoken.HoneytokenHandler,
 	*honeytoken.CanaryHandler,
+	*honeytoken.FileEventHandler,
+	*honeytoken.FileMonitorService,
 	error,
 ) {
 	if databasePool == nil {
-		return nil, nil, nil, nil, fmt.Errorf(
+		return nil, nil, nil, nil, nil, nil, fmt.Errorf(
 			"database pool is required for honeytoken module",
 		)
 	}
@@ -458,7 +492,7 @@ func initializeHoneytokenModule(
 			"KEY_ENCRYPTION_MASTER_KEY",
 		)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	defer clear(keyEncryptionMasterKey)
 
@@ -472,7 +506,7 @@ func initializeHoneytokenModule(
 			keyEncryptionMasterKey,
 		)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf(
+		return nil, nil, nil, nil, nil, nil, fmt.Errorf(
 			"failed to initialize encryption key service: %w",
 			err,
 		)
@@ -498,7 +532,7 @@ func initializeHoneytokenModule(
 			encryptionKeyService,
 		)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf(
+		return nil, nil, nil, nil, nil, nil, fmt.Errorf(
 			"failed to initialize honeytoken generator: %w",
 			err,
 		)
@@ -510,7 +544,7 @@ func initializeHoneytokenModule(
 			honeytokenGenerator,
 		)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf(
+		return nil, nil, nil, nil, nil, nil, fmt.Errorf(
 			"failed to initialize honeytoken service: %w",
 			err,
 		)
@@ -525,7 +559,7 @@ func initializeHoneytokenModule(
 			canaryStoragePath,
 		)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf(
+		return nil, nil, nil, nil, nil, nil, fmt.Errorf(
 			"failed to initialize canary generator: %w",
 			err,
 		)
@@ -537,7 +571,7 @@ func initializeHoneytokenModule(
 		canaryDeploymentRoot,
 	)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf(
+		return nil, nil, nil, nil, nil, nil, fmt.Errorf(
 			"failed to initialize canary service: %w",
 			err,
 		)
@@ -547,13 +581,43 @@ func initializeHoneytokenModule(
 		canaryService,
 	)
 
+	fileEventService, err :=
+		honeytoken.NewFileEventService(
+			honeytokenRepository,
+		)
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, fmt.Errorf(
+			"failed to initialize file event service: %w",
+			err,
+		)
+	}
+
+	fileEventHandler :=
+		honeytoken.NewFileEventHandler(
+			fileEventService,
+		)
+
+	fileMonitorService, err :=
+		honeytoken.NewFileMonitorService(
+			honeytokenRepository,
+			fileEventService,
+			appLogger.Log,
+		)
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, fmt.Errorf(
+			"failed to initialize file monitor service: %w",
+			err,
+		)
+	}
+
 	return protectedFileHandler,
 		encryptionKeyHandler,
 		honeytokenHandler,
 		canaryHandler,
+		fileEventHandler,
+		fileMonitorService,
 		nil
 }
-
 func decodeRequiredAES256Key(
 	configName string,
 ) ([]byte, error) {
