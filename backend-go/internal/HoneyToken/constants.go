@@ -75,10 +75,36 @@ const (
 
 // Canary file types.
 const (
-	CanaryTypeDuplicate   = "DUPLICATE"
-	CanaryTypeDocument    = "DOCUMENT"
-	CanaryTypeSpreadsheet = "SPREADSHEET"
-	CanaryTypeText        = "TEXT"
+	CanaryTypeDocument       = "DOCUMENT"
+	CanaryTypeSpreadsheet    = "SPREADSHEET"
+	CanaryTypePDF            = "PDF"
+	CanaryTypeImage          = "IMAGE"
+	CanaryTypeArchive        = "ARCHIVE"
+	CanaryTypeDatabaseBackup = "DATABASE_BACKUP"
+	CanaryTypeConfiguration  = "CONFIGURATION"
+	CanaryTypeSourceCode     = "SOURCE_CODE"
+	CanaryTypeCredentialFile = "CREDENTIAL_FILE"
+	CanaryTypeCustom         = "CUSTOM"
+)
+
+// Canary file statuses.
+const (
+	CanaryStatusDraft     = "DRAFT"
+	CanaryStatusDeployed  = "DEPLOYED"
+	CanaryStatusActive    = "ACTIVE"
+	CanaryStatusTriggered = "TRIGGERED"
+	CanaryStatusTampered  = "TAMPERED"
+	CanaryStatusMissing   = "MISSING"
+	CanaryStatusInactive  = "INACTIVE"
+	CanaryStatusExpired   = "EXPIRED"
+	CanaryStatusArchived  = "ARCHIVED"
+)
+
+// Canary file hash algorithms.
+const (
+	CanaryHashAlgorithmSHA256 = "SHA256"
+	CanaryHashAlgorithmSHA384 = "SHA384"
+	CanaryHashAlgorithmSHA512 = "SHA512"
 )
 
 // File monitoring event types.

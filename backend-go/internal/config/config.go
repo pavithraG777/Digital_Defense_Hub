@@ -39,8 +39,10 @@ type JWTConfig struct {
 }
 
 type StorageConfig struct {
-	UploadPath    string
-	MaxUploadSize int64
+	UploadPath           string
+	MaxUploadSize        int64
+	CanaryStoragePath    string
+	CanaryDeploymentRoot string
 }
 
 type LogConfig struct {
@@ -54,6 +56,14 @@ func Load() (*Config, error) {
 
 	viper.AutomaticEnv()
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	viper.SetDefault(
+		"CANARY_STORAGE_PATH",
+		"./storage/canary",
+	)
+	viper.SetDefault(
+		"CANARY_DEPLOYMENT_ROOT",
+		"./storage/canary-deployments",
+	)
 
 	if err := viper.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf(
@@ -97,8 +107,18 @@ func Load() (*Config, error) {
 		},
 
 		Storage: StorageConfig{
-			UploadPath:    viper.GetString("UPLOAD_PATH"),
-			MaxUploadSize: viper.GetInt64("MAX_UPLOAD_SIZE"),
+			UploadPath: viper.GetString(
+				"UPLOAD_PATH",
+			),
+			MaxUploadSize: viper.GetInt64(
+				"MAX_UPLOAD_SIZE",
+			),
+			CanaryStoragePath: viper.GetString(
+				"CANARY_STORAGE_PATH",
+			),
+			CanaryDeploymentRoot: viper.GetString(
+				"CANARY_DEPLOYMENT_ROOT",
+			),
 		},
 
 		Log: LogConfig{
@@ -166,6 +186,22 @@ func validate(cfg *Config) error {
 	if cfg.JWT.AccessTokenDuration <= 0 {
 		return fmt.Errorf(
 			"JWT_EXPIRATION must be greater than zero",
+		)
+	}
+
+	if strings.TrimSpace(
+		cfg.Storage.CanaryStoragePath,
+	) == "" {
+		return fmt.Errorf(
+			"CANARY_STORAGE_PATH is required",
+		)
+	}
+
+	if strings.TrimSpace(
+		cfg.Storage.CanaryDeploymentRoot,
+	) == "" {
+		return fmt.Errorf(
+			"CANARY_DEPLOYMENT_ROOT is required",
 		)
 	}
 

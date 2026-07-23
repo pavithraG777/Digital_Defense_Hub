@@ -91,12 +91,14 @@ func SetupRouter(
 	roleService := role.NewService(roleRepository)
 	roleHandler := role.NewHandler(roleService)
 
-	// Honeytoken security module dependencies
 	protectedFileHandler,
 		encryptionKeyHandler,
 		honeytokenHandler,
+		canaryHandler,
 		err := initializeHoneytokenModule(
 		db.Pool,
+		cfg.Storage.CanaryStoragePath,
+		cfg.Storage.CanaryDeploymentRoot,
 	)
 	if err != nil {
 		panic(err)
@@ -153,6 +155,12 @@ func SetupRouter(
 	honeytoken.RegisterHoneytokenRoutes(
 		protected,
 		honeytokenHandler,
+		db.Pool,
+	)
+
+	honeytoken.RegisterCanaryRoutes(
+		protected,
+		canaryHandler,
 		db.Pool,
 	)
 
@@ -430,23 +438,27 @@ func SetupRouter(
 
 func initializeHoneytokenModule(
 	databasePool *pgxpool.Pool,
+	canaryStoragePath string,
+	canaryDeploymentRoot string,
 ) (
 	*honeytoken.Handler,
 	*honeytoken.EncryptionKeyHandler,
 	*honeytoken.HoneytokenHandler,
+	*honeytoken.CanaryHandler,
 	error,
 ) {
 	if databasePool == nil {
-		return nil, nil, nil, fmt.Errorf(
+		return nil, nil, nil, nil, fmt.Errorf(
 			"database pool is required for honeytoken module",
 		)
 	}
 
-	keyEncryptionMasterKey, err := decodeRequiredAES256Key(
-		"KEY_ENCRYPTION_MASTER_KEY",
-	)
+	keyEncryptionMasterKey, err :=
+		decodeRequiredAES256Key(
+			"KEY_ENCRYPTION_MASTER_KEY",
+		)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	defer clear(keyEncryptionMasterKey)
 
@@ -454,46 +466,51 @@ func initializeHoneytokenModule(
 		databasePool,
 	)
 
-	encryptionKeyService, err := honeytoken.NewEncryptionKeyService(
-		honeytokenRepository,
-		keyEncryptionMasterKey,
-	)
+	encryptionKeyService, err :=
+		honeytoken.NewEncryptionKeyService(
+			honeytokenRepository,
+			keyEncryptionMasterKey,
+		)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf(
+		return nil, nil, nil, nil, fmt.Errorf(
 			"failed to initialize encryption key service: %w",
 			err,
 		)
 	}
 
-	protectedFileService := honeytoken.NewProtectedFileService(
-		honeytokenRepository,
-		encryptionKeyService,
-	)
+	protectedFileService :=
+		honeytoken.NewProtectedFileService(
+			honeytokenRepository,
+			encryptionKeyService,
+		)
 
 	protectedFileHandler := honeytoken.NewHandler(
 		protectedFileService,
 	)
 
-	encryptionKeyHandler := honeytoken.NewEncryptionKeyHandler(
-		encryptionKeyService,
-	)
+	encryptionKeyHandler :=
+		honeytoken.NewEncryptionKeyHandler(
+			encryptionKeyService,
+		)
 
-	honeytokenGenerator, err := honeytoken.NewHoneytokenGenerator(
-		encryptionKeyService,
-	)
+	honeytokenGenerator, err :=
+		honeytoken.NewHoneytokenGenerator(
+			encryptionKeyService,
+		)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf(
+		return nil, nil, nil, nil, fmt.Errorf(
 			"failed to initialize honeytoken generator: %w",
 			err,
 		)
 	}
 
-	honeytokenService, err := honeytoken.NewHoneytokenService(
-		honeytokenRepository,
-		honeytokenGenerator,
-	)
+	honeytokenService, err :=
+		honeytoken.NewHoneytokenService(
+			honeytokenRepository,
+			honeytokenGenerator,
+		)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf(
+		return nil, nil, nil, nil, fmt.Errorf(
 			"failed to initialize honeytoken service: %w",
 			err,
 		)
@@ -503,9 +520,37 @@ func initializeHoneytokenModule(
 		honeytokenService,
 	)
 
+	canaryGenerator, err :=
+		honeytoken.NewCanaryGenerator(
+			canaryStoragePath,
+		)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf(
+			"failed to initialize canary generator: %w",
+			err,
+		)
+	}
+
+	canaryService, err := honeytoken.NewCanaryService(
+		honeytokenRepository,
+		canaryGenerator,
+		canaryDeploymentRoot,
+	)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf(
+			"failed to initialize canary service: %w",
+			err,
+		)
+	}
+
+	canaryHandler := honeytoken.NewCanaryHandler(
+		canaryService,
+	)
+
 	return protectedFileHandler,
 		encryptionKeyHandler,
 		honeytokenHandler,
+		canaryHandler,
 		nil
 }
 

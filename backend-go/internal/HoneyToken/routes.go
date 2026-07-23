@@ -11,6 +11,7 @@ const (
 	protectedFilesRoute = "/protected-files"
 	encryptionKeysRoute = "/encryption-keys"
 	honeytokensRoute    = "/honeytokens"
+	canaryFilesRoute    = "/canary-files"
 
 	permissionHoneytokenCreate           = "HONEYTOKEN_CREATE"
 	permissionHoneytokenView             = "HONEYTOKEN_VIEW"
@@ -193,6 +194,60 @@ func RegisterHoneytokenRoutes(
 	)
 }
 
+// RegisterCanaryRoutes adds canary generation, retrieval and deployment
+// endpoints to the authenticated security route group.
+func RegisterCanaryRoutes(
+	protectedRouter *gin.RouterGroup,
+	handler *CanaryHandler,
+	databasePool *pgxpool.Pool,
+) {
+	validateCanaryRouteDependencies(
+		protectedRouter,
+		handler,
+		databasePool,
+	)
+
+	canaryFiles := protectedRouter.Group(
+		canaryFilesRoute,
+	)
+
+	canaryFiles.POST(
+		"",
+		middleware.RequirePermission(
+			databasePool,
+			permissionHoneytokenCreate,
+		),
+		handler.CreateCanaryFile,
+	)
+
+	canaryFiles.GET(
+		"",
+		middleware.RequirePermission(
+			databasePool,
+			permissionHoneytokenView,
+		),
+		handler.ListCanaryFiles,
+	)
+
+	canaryFiles.GET(
+		"/:id",
+		middleware.RequirePermission(
+			databasePool,
+			permissionHoneytokenView,
+		),
+		handler.GetCanaryFile,
+	)
+
+	canaryFiles.POST(
+		"/:id/deploy",
+		middleware.RequirePermission(
+			databasePool,
+			permissionOrganizationManageSecurity,
+		),
+		handler.DeployCanaryFile,
+	)
+}
+
 func validateHoneytokenRouteDependencies(
 	protectedRouter *gin.RouterGroup,
 	handler *HoneytokenHandler,
@@ -214,5 +269,23 @@ func validateHoneytokenRouteDependencies(
 		panic(
 			"database pool is required for honeytoken routes",
 		)
+	}
+}
+
+func validateCanaryRouteDependencies(
+	protectedRouter *gin.RouterGroup,
+	handler *CanaryHandler,
+	databasePool *pgxpool.Pool,
+) {
+	if protectedRouter == nil {
+		panic("protected router group is required")
+	}
+
+	if handler == nil || !handler.isAvailable() {
+		panic("canary handler is required")
+	}
+
+	if databasePool == nil {
+		panic("database pool is required for canary routes")
 	}
 }
