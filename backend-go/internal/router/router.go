@@ -134,6 +134,37 @@ func SetupRouterWithRuntime(
 		threatService,
 	)
 
+	// Incident Engine API dependencies.
+	incidentRepository := honeytoken.NewIncidentRepository(
+		db.Pool,
+	)
+
+	incidentService, incidentServiceErr :=
+		honeytoken.NewIncidentService(
+			incidentRepository,
+		)
+	if incidentServiceErr != nil {
+		panic(fmt.Errorf(
+			"failed to initialize incident service: %w",
+			incidentServiceErr,
+		))
+	}
+
+	incidentHandler := honeytoken.NewIncidentHandler(
+		incidentService,
+	)
+
+	incidentAutomationService, incidentAutomationErr :=
+		honeytoken.NewIncidentAutomationService(
+			incidentRepository,
+		)
+	if incidentAutomationErr != nil {
+		panic(fmt.Errorf(
+			"failed to initialize incident automation service: %w",
+			incidentAutomationErr,
+		))
+	}
+
 	threatEngine, err := honeytoken.NewThreatEngine(
 		threatRepository,
 	)
@@ -156,6 +187,9 @@ func SetupRouterWithRuntime(
 			err,
 		))
 	}
+	threatWorker.SetIncidentAutomationService(
+		incidentAutomationService,
+	)
 
 	protectedFileHandler,
 		encryptionKeyHandler,
@@ -242,6 +276,12 @@ func SetupRouterWithRuntime(
 	honeytoken.RegisterThreatRoutes(
 		protected,
 		threatHandler,
+		db.Pool,
+	)
+
+	honeytoken.RegisterIncidentRoutes(
+		protected,
+		incidentHandler,
 		db.Pool,
 	)
 

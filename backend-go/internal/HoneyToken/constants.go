@@ -171,24 +171,67 @@ const (
 	ThreatLevelCritical = "CRITICAL"
 )
 
-// Incident statuses.
+// Incident statuses represent the complete incident-response lifecycle.
 const (
 	IncidentStatusOpen          = "OPEN"
+	IncidentStatusAssigned      = "ASSIGNED"
 	IncidentStatusInvestigating = "INVESTIGATING"
 	IncidentStatusContained     = "CONTAINED"
+	IncidentStatusEradicated    = "ERADICATED"
+	IncidentStatusRecovering    = "RECOVERING"
 	IncidentStatusResolved      = "RESOLVED"
 	IncidentStatusClosed        = "CLOSED"
-	IncidentStatusFalsePositive = "FALSE_POSITIVE"
+	IncidentStatusReopened      = "REOPENED"
+	IncidentStatusCancelled     = "CANCELLED"
 )
 
-// Incident types.
+// Incident categories classify the primary security problem.
 const (
-	IncidentTypeHoneytokenAccess = "HONEYTOKEN_ACCESS"
-	IncidentTypeCanaryTriggered  = "CANARY_TRIGGERED"
-	IncidentTypeMassModification = "MASS_FILE_MODIFICATION"
-	IncidentTypeMassRename       = "MASS_FILE_RENAME"
-	IncidentTypeMassDeletion     = "MASS_FILE_DELETION"
-	IncidentTypeRansomware       = "RANSOMWARE_ACTIVITY"
+	IncidentCategoryUnauthorizedAccess = "UNAUTHORIZED_ACCESS"
+	IncidentCategoryHoneytokenTrigger  = "HONEYTOKEN_TRIGGER"
+	IncidentCategoryCanaryFileTrigger  = "CANARY_FILE_TRIGGER"
+	IncidentCategoryRansomware         = "RANSOMWARE"
+	IncidentCategoryMalware            = "MALWARE"
+	IncidentCategoryPhishing           = "PHISHING"
+	IncidentCategoryDataBreach         = "DATA_BREACH"
+	IncidentCategoryInsiderThreat      = "INSIDER_THREAT"
+	IncidentCategoryAccountCompromise  = "ACCOUNT_COMPROMISE"
+	IncidentCategoryAPIAttack          = "API_ATTACK"
+	IncidentCategoryDeepfake           = "DEEPFAKE"
+	IncidentCategoryDigitalEvidence    = "DIGITAL_EVIDENCE"
+	IncidentCategoryPolicyViolation    = "POLICY_VIOLATION"
+	IncidentCategorySystemAnomaly      = "SYSTEM_ANOMALY"
+	IncidentCategoryOther              = "OTHER"
+)
+
+// Incident priorities represent the required response urgency.
+const (
+	IncidentPriorityLow    = "LOW"
+	IncidentPriorityMedium = "MEDIUM"
+	IncidentPriorityHigh   = "HIGH"
+	IncidentPriorityUrgent = "URGENT"
+)
+
+// Incident detection sources identify how an incident was discovered.
+const (
+	IncidentDetectionSourceSecurityAlert  = "SECURITY_ALERT"
+	IncidentDetectionSourceHoneytoken     = "HONEYTOKEN"
+	IncidentDetectionSourceCanaryFile     = "CANARY_FILE"
+	IncidentDetectionSourceFileMonitoring = "FILE_MONITORING"
+	IncidentDetectionSourceAIAnalysis     = "AI_ANALYSIS"
+	IncidentDetectionSourceUserReport     = "USER_REPORT"
+	IncidentDetectionSourceAdminReport    = "ADMIN_REPORT"
+	IncidentDetectionSourceSystem         = "SYSTEM"
+	IncidentDetectionSourceExternalReport = "EXTERNAL_REPORT"
+	IncidentDetectionSourceOther          = "OTHER"
+)
+
+// Incident defaults and identifiers.
+const (
+	IncidentNumberPrefix    = "DDH-INC"
+	DefaultIncidentSeverity = ThreatLevelMedium
+	DefaultIncidentPriority = IncidentPriorityMedium
+	DefaultIncidentStatus   = IncidentStatusOpen
 )
 
 // Threat score values.

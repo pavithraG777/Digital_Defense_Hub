@@ -17,6 +17,8 @@ const (
 	threatProcessingTimeout  = 30 * time.Second
 )
 
+const incidentAutomationTimeout = 15 * time.Second
+
 var (
 	ErrThreatWorkerNotRunning = errors.New("threat worker is not running")
 	ErrThreatWorkerStopped    = errors.New("threat worker has stopped")
@@ -32,9 +34,10 @@ type ThreatWorkerStats struct {
 
 // ThreatWorker asynchronously processes normalized security signals.
 type ThreatWorker struct {
-	engine *ThreatEngine
-	logger *zap.Logger
-	queue  chan ThreatSignal
+	engine             *ThreatEngine
+	logger             *zap.Logger
+	queue              chan ThreatSignal
+	incidentAutomation *IncidentAutomationService
 
 	workerCount int
 
@@ -91,6 +94,21 @@ func NewThreatWorker(
 		queue:       make(chan ThreatSignal, queueSize),
 		workerCount: workerCount,
 	}, nil
+}
+
+// SetIncidentAutomationService connects successful Threat Engine results to
+// automatic Incident Engine escalation.
+func (w *ThreatWorker) SetIncidentAutomationService(
+	service *IncidentAutomationService,
+) {
+	if w == nil {
+		return
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.incidentAutomation = service
 }
 
 // Start launches the configured threat-processing goroutines.
@@ -455,6 +473,92 @@ func (w *ThreatWorker) processSignal(
 			result.Threat.Severity,
 		),
 	)
+	w.processIncidentAutomation(
+		parent,
+		workerID,
+		result.Threat,
+	)
+}
+
+func (w *ThreatWorker) processIncidentAutomation(
+	parent context.Context,
+	workerID int,
+	threat *ThreatResponse,
+) {
+	service := w.incidentAutomationService()
+	if service == nil || threat == nil {
+		return
+	}
+
+	automationContext, cancel := context.WithTimeout(
+		parent,
+		incidentAutomationTimeout,
+	)
+	defer cancel()
+
+	result, err := service.CreateFromThreatResponse(
+		automationContext,
+		threat,
+	)
+	if err != nil {
+		w.logger.Error(
+			"Automatic incident creation failed",
+			zap.Int("worker_id", workerID),
+			zap.String("threat_id", threat.ID),
+			zap.String(
+				"organization_id",
+				threat.OrganizationID,
+			),
+			zap.Error(err),
+		)
+
+		return
+	}
+
+	if result == nil {
+		return
+	}
+
+	if result.Incident == nil {
+		w.logger.Debug(
+			"Threat did not require automatic incident creation",
+			zap.Int("worker_id", workerID),
+			zap.String("threat_id", threat.ID),
+			zap.String("reason", result.Reason),
+		)
+
+		return
+	}
+
+	w.logger.Info(
+		"Incident automation processed",
+		zap.Int("worker_id", workerID),
+		zap.String("threat_id", threat.ID),
+		zap.String(
+			"incident_id",
+			result.Incident.ID,
+		),
+		zap.String(
+			"incident_number",
+			result.Incident.IncidentNumber,
+		),
+		zap.Bool(
+			"incident_created",
+			result.IncidentCreated,
+		),
+		zap.String("reason", result.Reason),
+	)
+}
+
+func (w *ThreatWorker) incidentAutomationService() *IncidentAutomationService {
+	if w == nil {
+		return nil
+	}
+
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
+	return w.incidentAutomation
 }
 
 func (w *ThreatWorker) runningError() error {
