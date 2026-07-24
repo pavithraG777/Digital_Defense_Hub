@@ -21,6 +21,10 @@ var (
 	ErrFileMonitorAlreadyStarted = errors.New(
 		"file monitor service is already started",
 	)
+
+	ErrFileMonitorRuntimeConfigured = errors.New(
+		"file monitor runtime is already configured",
+	)
 )
 
 const (
@@ -35,6 +39,7 @@ type FileMonitorService struct {
 	fileEventService *FileEventService
 	watcher          *fsnotify.Watcher
 	logger           *zap.Logger
+	threatWorker     *ThreatWorker
 
 	targetMutex        sync.RWMutex
 	targets            map[string]CanaryFile
@@ -124,8 +129,32 @@ func (s *FileMonitorService) Start(
 		parentContext,
 	)
 
+	if s.threatWorker != nil {
+		if err := s.threatWorker.Start(ctx); err != nil {
+			cancel()
+			s.stateMutex.Unlock()
+
+			return fmt.Errorf(
+				"failed to start Threat Engine worker: %w",
+				err,
+			)
+		}
+	}
+
 	if err := s.refreshTargets(ctx); err != nil {
 		cancel()
+
+		if s.threatWorker != nil {
+			cleanupContext, cleanupCancel :=
+				context.WithTimeout(
+					context.Background(),
+					5*time.Second,
+				)
+
+			_ = s.threatWorker.Stop(cleanupContext)
+			cleanupCancel()
+		}
+
 		s.stateMutex.Unlock()
 		return err
 	}
@@ -158,15 +187,23 @@ func (s *FileMonitorService) Start(
 			"monitored_files",
 			s.MonitoredFileCount(),
 		),
+		zap.Bool(
+			"threat_engine_enabled",
+			s.threatWorker != nil,
+		),
 	)
 
 	return nil
 }
 
-// Stop gracefully terminates watchers and event workers.
+// Stop gracefully terminates watchers, event workers, and the Threat Engine.
 func (s *FileMonitorService) Stop(
 	ctx context.Context,
 ) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	s.stateMutex.Lock()
 
 	if !s.started {
@@ -176,6 +213,7 @@ func (s *FileMonitorService) Stop(
 
 	cancel := s.cancel
 	done := s.done
+	threatWorker := s.threatWorker
 
 	s.stateMutex.Unlock()
 
@@ -191,11 +229,25 @@ func (s *FileMonitorService) Stop(
 		)
 	}
 
+	var threatWorkerError error
+
+	if threatWorker != nil {
+		threatWorkerError = threatWorker.Stop(ctx)
+	}
+
 	select {
 	case <-done:
 		s.logger.Info(
 			"File monitor service stopped",
 		)
+
+		if threatWorkerError != nil {
+			return fmt.Errorf(
+				"failed to stop Threat Engine worker: %w",
+				threatWorkerError,
+			)
+		}
+
 		return nil
 
 	case <-ctx.Done():
@@ -804,4 +856,38 @@ func fileMonitorOptionalStringPointer(
 	}
 
 	return &value
+}
+
+// SetThreatWorker connects the Threat Engine worker lifecycle to the file
+// monitoring runtime. It must be called before Start.
+func (s *FileMonitorService) SetThreatWorker(
+	worker *ThreatWorker,
+) error {
+	if s == nil {
+		return errors.New(
+			"file monitor service is unavailable",
+		)
+	}
+
+	if worker == nil {
+		return errors.New(
+			"threat worker is required",
+		)
+	}
+
+	s.stateMutex.Lock()
+	defer s.stateMutex.Unlock()
+
+	if s.started {
+		return ErrFileMonitorAlreadyStarted
+	}
+
+	if s.threatWorker != nil &&
+		s.threatWorker != worker {
+		return ErrFileMonitorRuntimeConfigured
+	}
+
+	s.threatWorker = worker
+
+	return nil
 }

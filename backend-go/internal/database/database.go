@@ -30,6 +30,15 @@ func Connect(cfg *config.Config, logger *zap.Logger) (*Database, error) {
 		return nil, fmt.Errorf("failed to parse database configuration: %w", err)
 	}
 
+	// Store all database-generated timestamps in UTC. This is essential for
+	// consistent audit logs, file events, threats, and forensic evidence.
+	if poolConfig.ConnConfig.RuntimeParams == nil {
+		poolConfig.ConnConfig.RuntimeParams =
+			make(map[string]string)
+	}
+
+	poolConfig.ConnConfig.RuntimeParams["timezone"] = "UTC"
+
 	poolConfig.MaxConns = 20
 	poolConfig.MinConns = 2
 	poolConfig.MaxConnLifetime = 30 * time.Minute

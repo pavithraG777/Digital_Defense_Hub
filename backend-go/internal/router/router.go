@@ -115,6 +115,48 @@ func SetupRouterWithRuntime(
 	roleService := role.NewService(roleRepository)
 	roleHandler := role.NewHandler(roleService)
 
+	// Threat Engine dependencies.
+	threatRepository := honeytoken.NewThreatRepository(
+		db.Pool,
+	)
+
+	threatService, err := honeytoken.NewThreatService(
+		threatRepository,
+	)
+	if err != nil {
+		panic(fmt.Errorf(
+			"failed to initialize threat service: %w",
+			err,
+		))
+	}
+
+	threatHandler := honeytoken.NewThreatHandler(
+		threatService,
+	)
+
+	threatEngine, err := honeytoken.NewThreatEngine(
+		threatRepository,
+	)
+	if err != nil {
+		panic(fmt.Errorf(
+			"failed to initialize Threat Engine: %w",
+			err,
+		))
+	}
+
+	threatWorker, err := honeytoken.NewThreatWorker(
+		threatEngine,
+		appLogger.Log,
+		0,
+		0,
+	)
+	if err != nil {
+		panic(fmt.Errorf(
+			"failed to initialize Threat Engine worker: %w",
+			err,
+		))
+	}
+
 	protectedFileHandler,
 		encryptionKeyHandler,
 		honeytokenHandler,
@@ -125,6 +167,7 @@ func SetupRouterWithRuntime(
 		db.Pool,
 		cfg.Storage.CanaryStoragePath,
 		cfg.Storage.CanaryDeploymentRoot,
+		threatWorker,
 	)
 	if err != nil {
 		panic(err)
@@ -193,6 +236,12 @@ func SetupRouterWithRuntime(
 	honeytoken.RegisterFileEventRoutes(
 		protected,
 		fileEventHandler,
+		db.Pool,
+	)
+
+	honeytoken.RegisterThreatRoutes(
+		protected,
+		threatHandler,
 		db.Pool,
 	)
 
@@ -472,6 +521,7 @@ func initializeHoneytokenModule(
 	databasePool *pgxpool.Pool,
 	canaryStoragePath string,
 	canaryDeploymentRoot string,
+	threatWorker *honeytoken.ThreatWorker,
 ) (
 	*honeytoken.Handler,
 	*honeytoken.EncryptionKeyHandler,
@@ -484,6 +534,12 @@ func initializeHoneytokenModule(
 	if databasePool == nil {
 		return nil, nil, nil, nil, nil, nil, fmt.Errorf(
 			"database pool is required for honeytoken module",
+		)
+	}
+
+	if threatWorker == nil {
+		return nil, nil, nil, nil, nil, nil, fmt.Errorf(
+			"Threat Engine worker is required",
 		)
 	}
 
@@ -592,6 +648,15 @@ func initializeHoneytokenModule(
 		)
 	}
 
+	if err = fileEventService.SetThreatWorker(
+		threatWorker,
+	); err != nil {
+		return nil, nil, nil, nil, nil, nil, fmt.Errorf(
+			"failed to connect File Event Service to Threat Engine: %w",
+			err,
+		)
+	}
+
 	fileEventHandler :=
 		honeytoken.NewFileEventHandler(
 			fileEventService,
@@ -606,6 +671,15 @@ func initializeHoneytokenModule(
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, fmt.Errorf(
 			"failed to initialize file monitor service: %w",
+			err,
+		)
+	}
+
+	if err = fileMonitorService.SetThreatWorker(
+		threatWorker,
+	); err != nil {
+		return nil, nil, nil, nil, nil, nil, fmt.Errorf(
+			"failed to connect File Monitor Service to Threat Engine: %w",
 			err,
 		)
 	}

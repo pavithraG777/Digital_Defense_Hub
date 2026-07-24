@@ -353,3 +353,75 @@ func validateFileEventRouteDependencies(
 		panic("database pool is required for file event routes")
 	}
 }
+
+const threatsRoute = "/threats"
+
+// RegisterThreatRoutes adds organization-scoped Threat Engine endpoints to
+// the authenticated security route group.
+func RegisterThreatRoutes(
+	protectedRouter *gin.RouterGroup,
+	handler *ThreatHandler,
+	databasePool *pgxpool.Pool,
+) {
+	validateThreatRouteDependencies(
+		protectedRouter,
+		handler,
+		databasePool,
+	)
+
+	threats := protectedRouter.Group(threatsRoute)
+
+	threats.GET(
+		"",
+		middleware.RequirePermission(
+			databasePool,
+			permissionHoneytokenView,
+		),
+		handler.ListThreats,
+	)
+
+	threats.GET(
+		"/:id",
+		middleware.RequirePermission(
+			databasePool,
+			permissionHoneytokenView,
+		),
+		handler.GetThreat,
+	)
+
+	threats.PATCH(
+		"/:id/status",
+		middleware.RequirePermission(
+			databasePool,
+			permissionOrganizationManageSecurity,
+		),
+		handler.UpdateThreatStatus,
+	)
+
+	threats.PATCH(
+		"/:id/assignment",
+		middleware.RequirePermission(
+			databasePool,
+			permissionOrganizationManageSecurity,
+		),
+		handler.AssignThreat,
+	)
+}
+
+func validateThreatRouteDependencies(
+	protectedRouter *gin.RouterGroup,
+	handler *ThreatHandler,
+	databasePool *pgxpool.Pool,
+) {
+	if protectedRouter == nil {
+		panic("protected router group is required")
+	}
+
+	if handler == nil || !handler.isAvailable() {
+		panic("threat handler is required")
+	}
+
+	if databasePool == nil {
+		panic("database pool is required for threat routes")
+	}
+}

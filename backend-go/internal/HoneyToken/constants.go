@@ -215,3 +215,59 @@ const (
 	HashAlgorithmSHA256       = "SHA-256"
 	EncryptionAlgorithmAES256 = "AES-256-GCM"
 )
+
+// Threat types identify the security behaviour detected by the threat engine.
+const (
+	ThreatTypeHoneytokenAccess     = "HONEYTOKEN_ACCESS"
+	ThreatTypeCanaryTriggered      = "CANARY_TRIGGERED"
+	ThreatTypeFileTampering        = "FILE_TAMPERING"
+	ThreatTypeMassFileModification = "MASS_FILE_MODIFICATION"
+	ThreatTypeMassFileRename       = "MASS_FILE_RENAME"
+	ThreatTypeMassFileDeletion     = "MASS_FILE_DELETION"
+	ThreatTypeRansomwareActivity   = "RANSOMWARE_ACTIVITY"
+	ThreatTypeUnauthorizedAccess   = "UNAUTHORIZED_ACCESS"
+	ThreatTypeSuspiciousProcess    = "SUSPICIOUS_PROCESS"
+	ThreatTypeHashMismatch         = "HASH_MISMATCH"
+	ThreatTypePermissionAbuse      = "PERMISSION_ABUSE"
+	ThreatTypeCustom               = "CUSTOM"
+)
+
+// Threat categories group related threat behaviours.
+const (
+	ThreatCategoryDeception        = "DECEPTION"
+	ThreatCategoryRansomware       = "RANSOMWARE"
+	ThreatCategoryIntegrity        = "INTEGRITY"
+	ThreatCategoryAccessControl    = "ACCESS_CONTROL"
+	ThreatCategoryMalware          = "MALWARE"
+	ThreatCategoryBehaviourAnomaly = "BEHAVIOURAL_ANOMALY"
+	ThreatCategoryUnknown          = "UNKNOWN"
+)
+
+// Threat classifications represent the investigation conclusion.
+const (
+	ThreatClassificationUnknown         = "UNKNOWN"
+	ThreatClassificationLikelyBenign    = "LIKELY_BENIGN"
+	ThreatClassificationSuspicious      = "SUSPICIOUS"
+	ThreatClassificationLikelyMalicious = "LIKELY_MALICIOUS"
+	ThreatClassificationMalicious       = "MALICIOUS"
+)
+
+// Threat statuses represent the threat investigation lifecycle.
+const (
+	ThreatStatusDetected      = "DETECTED"
+	ThreatStatusAnalyzing     = "ANALYZING"
+	ThreatStatusConfirmed     = "CONFIRMED"
+	ThreatStatusFalsePositive = "FALSE_POSITIVE"
+	ThreatStatusMitigated     = "MITIGATED"
+	ThreatStatusEscalated     = "ESCALATED"
+	ThreatStatusResolved      = "RESOLVED"
+	ThreatStatusArchived      = "ARCHIVED"
+)
+
+// Threat-file-event relations describe how an event supports a threat.
+const (
+	ThreatEventRelationPrimary    = "PRIMARY"
+	ThreatEventRelationSupporting = "SUPPORTING"
+	ThreatEventRelationCorrelated = "CORRELATED"
+	ThreatEventRelationEvidence   = "EVIDENCE"
+)

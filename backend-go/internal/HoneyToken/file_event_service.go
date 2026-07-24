@@ -12,6 +12,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,6 +31,60 @@ var (
 
 type FileEventService struct {
 	repository *Repository
+
+	threatWorkerMu sync.RWMutex
+	threatWorker   *ThreatWorker
+}
+
+// SetThreatWorker connects persisted file events to the asynchronous Threat
+// Engine. It must be configured before the API server begins accepting
+// requests.
+func (s *FileEventService) SetThreatWorker(
+	worker *ThreatWorker,
+) error {
+	if s == nil {
+		return errors.New(
+			"file event service is unavailable",
+		)
+	}
+
+	if worker == nil {
+		return errors.New(
+			"threat worker is required",
+		)
+	}
+
+	s.threatWorkerMu.Lock()
+	defer s.threatWorkerMu.Unlock()
+
+	if s.threatWorker != nil &&
+		s.threatWorker != worker {
+		return errors.New(
+			"threat worker is already configured",
+		)
+	}
+
+	s.threatWorker = worker
+
+	return nil
+}
+
+func (s *FileEventService) submitFileEventForThreatAnalysis(
+	event *FileEvent,
+) {
+	if s == nil || event == nil {
+		return
+	}
+
+	s.threatWorkerMu.RLock()
+	worker := s.threatWorker
+	s.threatWorkerMu.RUnlock()
+
+	if worker == nil {
+		return
+	}
+
+	worker.TrySubmitFileEvent(event)
 }
 
 func NewFileEventService(
@@ -330,6 +385,8 @@ func (s *FileEventService) CreateFileEvent(
 			event,
 		)
 		if err == nil {
+			s.submitFileEventForThreatAnalysis(event)
+
 			return buildCreateFileEventResponse(
 				event,
 			), nil
