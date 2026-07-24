@@ -19,6 +19,7 @@ import (
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/health"
 	appLogger "github.com/pavithraG777/cyber-security-platform/backend/internal/logger"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/middleware"
+	"github.com/pavithraG777/cyber-security-platform/backend/internal/notification"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/permission"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/role"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/rolepermission"
@@ -30,8 +31,19 @@ func SetupRouter(
 	db *database.Database,
 	cfg *config.Config,
 ) *gin.Engine {
-	configuredRouter, fileMonitorService :=
+	configuredRouter,
+		fileMonitorService,
+		notificationModule :=
 		SetupRouterWithRuntime(db, cfg)
+
+	if err := notificationModule.Start(
+		context.Background(),
+	); err != nil {
+		panic(fmt.Errorf(
+			"failed to start notification worker: %w",
+			err,
+		))
+	}
 
 	if err := fileMonitorService.Start(
 		context.Background(),
@@ -51,6 +63,7 @@ func SetupRouterWithRuntime(
 ) (
 	*gin.Engine,
 	*honeytoken.FileMonitorService,
+	*notification.Module,
 ) {
 	router := gin.New()
 
@@ -207,6 +220,34 @@ func SetupRouterWithRuntime(
 		panic(err)
 	}
 
+	notificationModule, err :=
+		notification.NewModule(
+			db.Pool,
+			cfg.Notification,
+			appLogger.Log,
+		)
+	if err != nil {
+		panic(fmt.Errorf(
+			"failed to initialize notification module: %w",
+			err,
+		))
+	}
+
+	threatNotificationPublisher, publisherErr :=
+		newSecurityNotificationPublisher(
+			notificationModule.SecurityNotifications,
+		)
+	if publisherErr != nil {
+		panic(fmt.Errorf(
+			"failed to initialize Threat Engine notification publisher: %w",
+			publisherErr,
+		))
+	}
+
+	threatWorker.SetSecurityNotificationPublisher(
+		threatNotificationPublisher,
+	)
+
 	api := router.Group("/api")
 	v1 := api.Group("/v1")
 
@@ -282,6 +323,12 @@ func SetupRouterWithRuntime(
 	honeytoken.RegisterIncidentRoutes(
 		protected,
 		incidentHandler,
+		db.Pool,
+	)
+
+	notification.RegisterRoutes(
+		protected,
+		notificationModule.Handler,
 		db.Pool,
 	)
 
@@ -553,7 +600,9 @@ func SetupRouterWithRuntime(
 			}
 		}
 
-		return router, fileMonitorService
+		return router,
+			fileMonitorService,
+			notificationModule
 	}
 }
 

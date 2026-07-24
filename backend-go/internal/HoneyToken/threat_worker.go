@@ -20,8 +20,13 @@ const (
 const incidentAutomationTimeout = 15 * time.Second
 
 var (
-	ErrThreatWorkerNotRunning = errors.New("threat worker is not running")
-	ErrThreatWorkerStopped    = errors.New("threat worker has stopped")
+	ErrThreatWorkerNotRunning = errors.New(
+		"threat worker is not running",
+	)
+
+	ErrThreatWorkerStopped = errors.New(
+		"threat worker has stopped",
+	)
 )
 
 // ThreatWorkerStats contains background threat-processing statistics.
@@ -34,10 +39,11 @@ type ThreatWorkerStats struct {
 
 // ThreatWorker asynchronously processes normalized security signals.
 type ThreatWorker struct {
-	engine             *ThreatEngine
-	logger             *zap.Logger
-	queue              chan ThreatSignal
-	incidentAutomation *IncidentAutomationService
+	engine                        *ThreatEngine
+	logger                        *zap.Logger
+	queue                         chan ThreatSignal
+	incidentAutomation            *IncidentAutomationService
+	securityNotificationPublisher SecurityNotificationPublisher
 
 	workerCount int
 
@@ -60,7 +66,9 @@ func NewThreatWorker(
 	queueSize int,
 ) (*ThreatWorker, error) {
 	if engine == nil {
-		return nil, errors.New("threat engine is required")
+		return nil, errors.New(
+			"threat engine is required",
+		)
 	}
 
 	if logger == nil {
@@ -81,7 +89,8 @@ func NewThreatWorker(
 		queueSize = defaultThreatQueueSize
 	}
 
-	if queueSize < workerCount || queueSize > 10000 {
+	if queueSize < workerCount ||
+		queueSize > 10000 {
 		return nil, fmt.Errorf(
 			"threat queue size must be between %d and 10000",
 			workerCount,
@@ -111,10 +120,29 @@ func (w *ThreatWorker) SetIncidentAutomationService(
 	w.incidentAutomation = service
 }
 
-// Start launches the configured threat-processing goroutines.
-func (w *ThreatWorker) Start(parent context.Context) error {
+// SetSecurityNotificationPublisher connects the Threat Engine worker to the
+// Notification Engine without creating a direct package dependency.
+func (w *ThreatWorker) SetSecurityNotificationPublisher(
+	publisher SecurityNotificationPublisher,
+) {
 	if w == nil {
-		return errors.New("threat worker is unavailable")
+		return
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.securityNotificationPublisher = publisher
+}
+
+// Start launches the configured threat-processing goroutines.
+func (w *ThreatWorker) Start(
+	parent context.Context,
+) error {
+	if w == nil {
+		return errors.New(
+			"threat worker is unavailable",
+		)
 	}
 
 	if parent == nil {
@@ -132,7 +160,8 @@ func (w *ThreatWorker) Start(parent context.Context) error {
 		return nil
 	}
 
-	workerContext, cancel := context.WithCancel(parent)
+	workerContext, cancel :=
+		context.WithCancel(parent)
 
 	w.cancel = cancel
 	w.started = true
@@ -140,13 +169,22 @@ func (w *ThreatWorker) Start(parent context.Context) error {
 	for workerID := 1; workerID <= w.workerCount; workerID++ {
 		w.wait.Add(1)
 
-		go w.runWorker(workerContext, workerID)
+		go w.runWorker(
+			workerContext,
+			workerID,
+		)
 	}
 
 	w.logger.Info(
 		"Threat Engine worker started",
-		zap.Int("worker_count", w.workerCount),
-		zap.Int("queue_capacity", cap(w.queue)),
+		zap.Int(
+			"worker_count",
+			w.workerCount,
+		),
+		zap.Int(
+			"queue_capacity",
+			cap(w.queue),
+		),
 	)
 
 	return nil
@@ -159,7 +197,9 @@ func (w *ThreatWorker) Submit(
 	signal ThreatSignal,
 ) error {
 	if w == nil {
-		return errors.New("threat worker is unavailable")
+		return errors.New(
+			"threat worker is unavailable",
+		)
 	}
 
 	if ctx == nil {
@@ -173,10 +213,12 @@ func (w *ThreatWorker) Submit(
 	select {
 	case w.queue <- signal:
 		w.queuedCount.Add(1)
+
 		return nil
 
 	case <-ctx.Done():
 		w.droppedCount.Add(1)
+
 		return fmt.Errorf(
 			"queue threat signal: %w",
 			ctx.Err(),
@@ -186,19 +228,23 @@ func (w *ThreatWorker) Submit(
 
 // TrySubmit queues a signal without blocking. It returns false when the worker
 // is stopped or the queue is currently full.
-func (w *ThreatWorker) TrySubmit(signal ThreatSignal) bool {
+func (w *ThreatWorker) TrySubmit(
+	signal ThreatSignal,
+) bool {
 	if w == nil {
 		return false
 	}
 
 	if err := w.runningError(); err != nil {
 		w.droppedCount.Add(1)
+
 		return false
 	}
 
 	select {
 	case w.queue <- signal:
 		w.queuedCount.Add(1)
+
 		return true
 
 	default:
@@ -221,7 +267,9 @@ func (w *ThreatWorker) TrySubmit(signal ThreatSignal) bool {
 }
 
 // Stop gracefully cancels workers and waits for them to exit.
-func (w *ThreatWorker) Stop(ctx context.Context) error {
+func (w *ThreatWorker) Stop(
+	ctx context.Context,
+) error {
 	if w == nil {
 		return nil
 	}
@@ -234,6 +282,7 @@ func (w *ThreatWorker) Stop(ctx context.Context) error {
 
 	if w.stopped {
 		w.mu.Unlock()
+
 		return nil
 	}
 
@@ -241,6 +290,7 @@ func (w *ThreatWorker) Stop(ctx context.Context) error {
 	w.started = false
 
 	cancel := w.cancel
+
 	w.mu.Unlock()
 
 	if cancel != nil {
@@ -248,6 +298,7 @@ func (w *ThreatWorker) Stop(ctx context.Context) error {
 	}
 
 	completed := make(chan struct{})
+
 	go func() {
 		w.wait.Wait()
 		close(completed)
@@ -303,7 +354,11 @@ func (w *ThreatWorker) runWorker(
 			return
 
 		case signal := <-w.queue:
-			w.processSignal(ctx, workerID, signal)
+			w.processSignal(
+				ctx,
+				workerID,
+				signal,
+			)
 		}
 	}
 }
@@ -313,24 +368,29 @@ func (w *ThreatWorker) processSignal(
 	workerID int,
 	signal ThreatSignal,
 ) {
-	processingContext, cancel := context.WithTimeout(
-		parent,
-		threatProcessingTimeout,
-	)
+	processingContext, cancel :=
+		context.WithTimeout(
+			parent,
+			threatProcessingTimeout,
+		)
 	defer cancel()
 
 	claimed, err :=
-		w.engine.repository.ClaimFileEventForThreatAnalysis(
-			processingContext,
-			signal.OrganizationID,
-			signal.FileEventID,
-		)
+		w.engine.repository.
+			ClaimFileEventForThreatAnalysis(
+				processingContext,
+				signal.OrganizationID,
+				signal.FileEventID,
+			)
 	if err != nil {
 		w.failedCount.Add(1)
 
 		w.logger.Error(
 			"Failed to claim file event for Threat Engine",
-			zap.Int("worker_id", workerID),
+			zap.Int(
+				"worker_id",
+				workerID,
+			),
 			zap.String(
 				"file_event_id",
 				signal.FileEventID.String(),
@@ -344,7 +404,10 @@ func (w *ThreatWorker) processSignal(
 	if !claimed {
 		w.logger.Debug(
 			"File event was already claimed or processed",
-			zap.Int("worker_id", workerID),
+			zap.Int(
+				"worker_id",
+				workerID,
+			),
 			zap.String(
 				"file_event_id",
 				signal.FileEventID.String(),
@@ -368,18 +431,22 @@ func (w *ThreatWorker) processSignal(
 			)
 
 		statusError :=
-			w.engine.repository.MarkFileEventThreatFailed(
-				failureContext,
-				signal.OrganizationID,
-				signal.FileEventID,
-				"Threat Engine analysis failed",
-			)
+			w.engine.repository.
+				MarkFileEventThreatFailed(
+					failureContext,
+					signal.OrganizationID,
+					signal.FileEventID,
+					"Threat Engine analysis failed",
+				)
 
 		failureCancel()
 
 		w.logger.Error(
 			"Threat signal processing failed",
-			zap.Int("worker_id", workerID),
+			zap.Int(
+				"worker_id",
+				workerID,
+			),
 			zap.String(
 				"file_event_id",
 				signal.FileEventID.String(),
@@ -398,11 +465,13 @@ func (w *ThreatWorker) processSignal(
 		return
 	}
 
-	if err = w.engine.repository.MarkFileEventThreatProcessed(
-		processingContext,
-		signal.OrganizationID,
-		signal.FileEventID,
-	); err != nil {
+	err = w.engine.repository.
+		MarkFileEventThreatProcessed(
+			processingContext,
+			signal.OrganizationID,
+			signal.FileEventID,
+		)
+	if err != nil {
 		w.failedCount.Add(1)
 
 		failureContext, failureCancel :=
@@ -412,18 +481,22 @@ func (w *ThreatWorker) processSignal(
 			)
 
 		statusError :=
-			w.engine.repository.MarkFileEventThreatFailed(
-				failureContext,
-				signal.OrganizationID,
-				signal.FileEventID,
-				"Threat Engine status completion failed",
-			)
+			w.engine.repository.
+				MarkFileEventThreatFailed(
+					failureContext,
+					signal.OrganizationID,
+					signal.FileEventID,
+					"Threat Engine status completion failed",
+				)
 
 		failureCancel()
 
 		w.logger.Error(
 			"Failed to complete file event threat status",
-			zap.Int("worker_id", workerID),
+			zap.Int(
+				"worker_id",
+				workerID,
+			),
 			zap.String(
 				"file_event_id",
 				signal.FileEventID.String(),
@@ -440,10 +513,14 @@ func (w *ThreatWorker) processSignal(
 
 	w.processedCount.Add(1)
 
-	if result == nil || result.Threat == nil {
+	if result == nil ||
+		result.Threat == nil {
 		w.logger.Debug(
 			"File event processed without creating a threat",
-			zap.Int("worker_id", workerID),
+			zap.Int(
+				"worker_id",
+				workerID,
+			),
 			zap.String(
 				"file_event_id",
 				signal.FileEventID.String(),
@@ -455,7 +532,10 @@ func (w *ThreatWorker) processSignal(
 
 	w.logger.Info(
 		"Threat signal processed",
-		zap.Int("worker_id", workerID),
+		zap.Int(
+			"worker_id",
+			workerID,
+		),
 		zap.String(
 			"file_event_id",
 			signal.FileEventID.String(),
@@ -473,6 +553,31 @@ func (w *ThreatWorker) processSignal(
 			result.Threat.Severity,
 		),
 	)
+
+	if notificationErr :=
+		w.publishThreatDetectedNotification(
+			processingContext,
+			result.Threat,
+			result.ThreatCreated,
+		); notificationErr != nil {
+		w.logger.Error(
+			"Threat notification publication failed",
+			zap.Int(
+				"worker_id",
+				workerID,
+			),
+			zap.String(
+				"file_event_id",
+				signal.FileEventID.String(),
+			),
+			zap.String(
+				"threat_id",
+				result.Threat.ID,
+			),
+			zap.Error(notificationErr),
+		)
+	}
+
 	w.processIncidentAutomation(
 		parent,
 		workerID,
@@ -490,21 +595,29 @@ func (w *ThreatWorker) processIncidentAutomation(
 		return
 	}
 
-	automationContext, cancel := context.WithTimeout(
-		parent,
-		incidentAutomationTimeout,
-	)
+	automationContext, cancel :=
+		context.WithTimeout(
+			parent,
+			incidentAutomationTimeout,
+		)
 	defer cancel()
 
-	result, err := service.CreateFromThreatResponse(
-		automationContext,
-		threat,
-	)
+	result, err :=
+		service.CreateFromThreatResponse(
+			automationContext,
+			threat,
+		)
 	if err != nil {
 		w.logger.Error(
 			"Automatic incident creation failed",
-			zap.Int("worker_id", workerID),
-			zap.String("threat_id", threat.ID),
+			zap.Int(
+				"worker_id",
+				workerID,
+			),
+			zap.String(
+				"threat_id",
+				threat.ID,
+			),
 			zap.String(
 				"organization_id",
 				threat.OrganizationID,
@@ -522,9 +635,18 @@ func (w *ThreatWorker) processIncidentAutomation(
 	if result.Incident == nil {
 		w.logger.Debug(
 			"Threat did not require automatic incident creation",
-			zap.Int("worker_id", workerID),
-			zap.String("threat_id", threat.ID),
-			zap.String("reason", result.Reason),
+			zap.Int(
+				"worker_id",
+				workerID,
+			),
+			zap.String(
+				"threat_id",
+				threat.ID,
+			),
+			zap.String(
+				"reason",
+				result.Reason,
+			),
 		)
 
 		return
@@ -532,8 +654,14 @@ func (w *ThreatWorker) processIncidentAutomation(
 
 	w.logger.Info(
 		"Incident automation processed",
-		zap.Int("worker_id", workerID),
-		zap.String("threat_id", threat.ID),
+		zap.Int(
+			"worker_id",
+			workerID,
+		),
+		zap.String(
+			"threat_id",
+			threat.ID,
+		),
 		zap.String(
 			"incident_id",
 			result.Incident.ID,
@@ -546,8 +674,40 @@ func (w *ThreatWorker) processIncidentAutomation(
 			"incident_created",
 			result.IncidentCreated,
 		),
-		zap.String("reason", result.Reason),
+		zap.String(
+			"reason",
+			result.Reason,
+		),
 	)
+	if notificationErr :=
+		w.publishIncidentCreatedNotification(
+			automationContext,
+			threat,
+			result.Incident.ID,
+			result.Incident.IncidentNumber,
+			result.IncidentCreated,
+		); notificationErr != nil {
+		w.logger.Error(
+			"Incident notification publication failed",
+			zap.Int(
+				"worker_id",
+				workerID,
+			),
+			zap.String(
+				"threat_id",
+				threat.ID,
+			),
+			zap.String(
+				"incident_id",
+				result.Incident.ID,
+			),
+			zap.String(
+				"incident_number",
+				result.Incident.IncidentNumber,
+			),
+			zap.Error(notificationErr),
+		)
+	}
 }
 
 func (w *ThreatWorker) incidentAutomationService() *IncidentAutomationService {

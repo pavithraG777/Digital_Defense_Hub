@@ -28,7 +28,10 @@ func main() {
 	}
 	defer logger.Sync()
 
-	db, err := database.Connect(cfg, logger.Log)
+	db, err := database.Connect(
+		cfg,
+		logger.Log,
+	)
 	if err != nil {
 		logger.Log.Error(
 			"Database connection failed",
@@ -38,23 +41,54 @@ func main() {
 	}
 	defer db.Close(logger.Log)
 
-	httpRouter, fileMonitorService :=
+	httpRouter,
+		fileMonitorService,
+		notificationModule :=
 		router.SetupRouterWithRuntime(
 			db,
 			cfg,
 		)
 
-	monitorContext, cancelMonitor :=
-		context.WithCancel(context.Background())
-	defer cancelMonitor()
+	runtimeContext, cancelRuntime :=
+		context.WithCancel(
+			context.Background(),
+		)
+	defer cancelRuntime()
+
+	if err = notificationModule.Start(
+		runtimeContext,
+	); err != nil {
+		logger.Log.Error(
+			"Notification worker failed to start",
+			zap.Error(err),
+		)
+		return
+	}
 
 	if err = fileMonitorService.Start(
-		monitorContext,
+		runtimeContext,
 	); err != nil {
 		logger.Log.Error(
 			"File monitor service failed to start",
 			zap.Error(err),
 		)
+
+		stopContext, cancelStop :=
+			context.WithTimeout(
+				context.Background(),
+				5*time.Second,
+			)
+
+		if stopErr := notificationModule.Stop(
+			stopContext,
+		); stopErr != nil {
+			logger.Log.Error(
+				"Notification worker rollback failed",
+				zap.Error(stopErr),
+			)
+		}
+
+		cancelStop()
 		return
 	}
 
@@ -67,12 +101,18 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	serverErrors := make(chan error, 1)
+	serverErrors := make(
+		chan error,
+		1,
+	)
 
 	go func() {
 		logger.Log.Info(
 			"Server started",
-			zap.String("port", cfg.App.Port),
+			zap.String(
+				"port",
+				cfg.App.Port,
+			),
 		)
 
 		serverErrors <- server.ListenAndServe()
@@ -113,8 +153,6 @@ func main() {
 		)
 	defer cancelShutdown()
 
-	cancelMonitor()
-
 	if err = fileMonitorService.Stop(
 		shutdownContext,
 	); err != nil {
@@ -123,6 +161,17 @@ func main() {
 			zap.Error(err),
 		)
 	}
+
+	if err = notificationModule.Stop(
+		shutdownContext,
+	); err != nil {
+		logger.Log.Error(
+			"Notification worker shutdown failed",
+			zap.Error(err),
+		)
+	}
+
+	cancelRuntime()
 
 	if err = server.Shutdown(
 		shutdownContext,
