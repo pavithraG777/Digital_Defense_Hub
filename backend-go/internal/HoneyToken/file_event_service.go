@@ -29,11 +29,23 @@ var (
 	ErrInvalidFileEventMACAddress       = errors.New("invalid file event MAC address")
 )
 
+// FileEventAnalysisSubmitter submits persisted file events
+// to another asynchronous analysis engine.
+type FileEventAnalysisSubmitter interface {
+	TrySubmitFileEventAnalysis(
+		organizationID uuid.UUID,
+		fileEventID uuid.UUID,
+	) bool
+}
+
 type FileEventService struct {
 	repository *Repository
 
 	threatWorkerMu sync.RWMutex
 	threatWorker   *ThreatWorker
+
+	preEncryptionWorkerMu sync.RWMutex
+	preEncryptionWorker   FileEventAnalysisSubmitter
 }
 
 // SetThreatWorker connects persisted file events to the asynchronous Threat
@@ -69,6 +81,37 @@ func (s *FileEventService) SetThreatWorker(
 	return nil
 }
 
+// SetPreEncryptionWorker connects persisted file events to the asynchronous
+// Pre-Encryption Ransomware Detection worker.
+func (s *FileEventService) SetPreEncryptionWorker(
+	worker FileEventAnalysisSubmitter,
+) error {
+	if s == nil {
+		return errors.New(
+			"file event service is unavailable",
+		)
+	}
+
+	if worker == nil {
+		return errors.New(
+			"pre-encryption worker is required",
+		)
+	}
+
+	s.preEncryptionWorkerMu.Lock()
+	defer s.preEncryptionWorkerMu.Unlock()
+
+	if s.preEncryptionWorker != nil {
+		return errors.New(
+			"pre-encryption worker is already configured",
+		)
+	}
+
+	s.preEncryptionWorker = worker
+
+	return nil
+}
+
 func (s *FileEventService) submitFileEventForThreatAnalysis(
 	event *FileEvent,
 ) {
@@ -87,6 +130,29 @@ func (s *FileEventService) submitFileEventForThreatAnalysis(
 	worker.TrySubmitFileEvent(event)
 }
 
+func (s *FileEventService) submitFileEventForPreEncryptionAnalysis(
+	event *FileEvent,
+) {
+	if s == nil ||
+		event == nil ||
+		event.ID == uuid.Nil ||
+		event.OrganizationID == uuid.Nil {
+		return
+	}
+
+	s.preEncryptionWorkerMu.RLock()
+	worker := s.preEncryptionWorker
+	s.preEncryptionWorkerMu.RUnlock()
+
+	if worker == nil {
+		return
+	}
+
+	worker.TrySubmitFileEventAnalysis(
+		event.OrganizationID,
+		event.ID,
+	)
+}
 func NewFileEventService(
 	repository *Repository,
 ) (*FileEventService, error) {
@@ -386,6 +452,10 @@ func (s *FileEventService) CreateFileEvent(
 		)
 		if err == nil {
 			s.submitFileEventForThreatAnalysis(event)
+
+			s.submitFileEventForPreEncryptionAnalysis(
+				event,
+			)
 
 			return buildCreateFileEventResponse(
 				event,

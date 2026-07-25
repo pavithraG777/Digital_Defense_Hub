@@ -9,13 +9,14 @@ import (
 )
 
 type Config struct {
-	App          AppConfig
-	Database     DatabaseConfig
-	JWT          JWTConfig
-	Storage      StorageConfig
-	Log          LogConfig
-	AIRisk       AIRiskConfig
-	Notification NotificationConfig
+	App           AppConfig
+	Database      DatabaseConfig
+	JWT           JWTConfig
+	Storage       StorageConfig
+	Log           LogConfig
+	AIRisk        AIRiskConfig
+	PreEncryption PreEncryptionConfig
+	Notification  NotificationConfig
 }
 
 type AppConfig struct {
@@ -60,6 +61,18 @@ type AIRiskConfig struct {
 
 	Timeout         time.Duration
 	DefaultValidity time.Duration
+}
+
+type PreEncryptionConfig struct {
+	Enabled bool
+
+	WindowDuration time.Duration
+	MinimumScore   float64
+
+	WorkerCount   int
+	QueueCapacity int
+
+	AnalysisTimeout time.Duration
 }
 
 type NotificationConfig struct {
@@ -240,6 +253,24 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	preEncryptionWindowDuration, err :=
+		loadConfigurationDuration(
+			"PRE_ENCRYPTION_WINDOW_DURATION",
+			time.Minute,
+		)
+	if err != nil {
+		return nil, err
+	}
+
+	preEncryptionAnalysisTimeout, err :=
+		loadConfigurationDuration(
+			"PRE_ENCRYPTION_ANALYSIS_TIMEOUT",
+			30*time.Second,
+		)
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
 		App: AppConfig{
 			Name:     viper.GetString("APP_NAME"),
@@ -299,6 +330,23 @@ func Load() (*Config, error) {
 			),
 			Timeout:         aiRiskEngineTimeout,
 			DefaultValidity: aiRiskDefaultValidity,
+		},
+
+		PreEncryption: PreEncryptionConfig{
+			Enabled: viper.GetBool(
+				"PRE_ENCRYPTION_ENABLED",
+			),
+			WindowDuration: preEncryptionWindowDuration,
+			MinimumScore: viper.GetFloat64(
+				"PRE_ENCRYPTION_MINIMUM_SCORE",
+			),
+			WorkerCount: viper.GetInt(
+				"PRE_ENCRYPTION_WORKER_COUNT",
+			),
+			QueueCapacity: viper.GetInt(
+				"PRE_ENCRYPTION_QUEUE_CAPACITY",
+			),
+			AnalysisTimeout: preEncryptionAnalysisTimeout,
 		},
 
 		Notification: NotificationConfig{
@@ -448,6 +496,31 @@ func setConfigurationDefaults() {
 	viper.SetDefault(
 		"AI_RISK_DEFAULT_VALIDITY",
 		"24h",
+	)
+
+	viper.SetDefault(
+		"PRE_ENCRYPTION_ENABLED",
+		true,
+	)
+	viper.SetDefault(
+		"PRE_ENCRYPTION_WINDOW_DURATION",
+		"1m",
+	)
+	viper.SetDefault(
+		"PRE_ENCRYPTION_MINIMUM_SCORE",
+		25.0,
+	)
+	viper.SetDefault(
+		"PRE_ENCRYPTION_WORKER_COUNT",
+		2,
+	)
+	viper.SetDefault(
+		"PRE_ENCRYPTION_QUEUE_CAPACITY",
+		256,
+	)
+	viper.SetDefault(
+		"PRE_ENCRYPTION_ANALYSIS_TIMEOUT",
+		"30s",
 	)
 	viper.SetDefault(
 		"CANARY_STORAGE_PATH",
@@ -701,6 +774,87 @@ func validate(
 	return nil
 }
 
+func validateAIEngineConfig(
+	aiRisk AIRiskConfig,
+	preEncryption PreEncryptionConfig,
+) error {
+	if !aiRisk.Enabled &&
+		!preEncryption.Enabled {
+		return nil
+	}
+
+	if strings.TrimSpace(
+		aiRisk.EngineURL,
+	) == "" {
+		return fmt.Errorf(
+			"AI_RISK_ENGINE_URL is required",
+		)
+	}
+
+	if len(strings.TrimSpace(
+		aiRisk.ServiceToken,
+	)) < 32 {
+		return fmt.Errorf(
+			"AI_RISK_SERVICE_TOKEN must contain at least 32 characters",
+		)
+	}
+
+	if aiRisk.Timeout <= 0 {
+		return fmt.Errorf(
+			"AI_RISK_ENGINE_TIMEOUT must be greater than zero",
+		)
+	}
+
+	if aiRisk.Enabled &&
+		aiRisk.DefaultValidity <= 0 {
+		return fmt.Errorf(
+			"AI_RISK_DEFAULT_VALIDITY must be greater than zero",
+		)
+	}
+
+	return nil
+}
+
+func validatePreEncryptionConfig(
+	cfg PreEncryptionConfig,
+) error {
+	if !cfg.Enabled {
+		return nil
+	}
+
+	if cfg.WindowDuration <= 0 {
+		return fmt.Errorf(
+			"PRE_ENCRYPTION_WINDOW_DURATION must be greater than zero",
+		)
+	}
+
+	if cfg.MinimumScore < 0 ||
+		cfg.MinimumScore > 100 {
+		return fmt.Errorf(
+			"PRE_ENCRYPTION_MINIMUM_SCORE must be between 0 and 100",
+		)
+	}
+
+	if cfg.WorkerCount < 1 {
+		return fmt.Errorf(
+			"PRE_ENCRYPTION_WORKER_COUNT must be at least 1",
+		)
+	}
+
+	if cfg.QueueCapacity < cfg.WorkerCount {
+		return fmt.Errorf(
+			"PRE_ENCRYPTION_QUEUE_CAPACITY must be greater than or equal to worker count",
+		)
+	}
+
+	if cfg.AnalysisTimeout <= 0 {
+		return fmt.Errorf(
+			"PRE_ENCRYPTION_ANALYSIS_TIMEOUT must be greater than zero",
+		)
+	}
+
+	return nil
+}
 func validateNotificationConfig(
 	cfg NotificationConfig,
 ) error {

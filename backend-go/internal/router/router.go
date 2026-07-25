@@ -22,6 +22,7 @@ import (
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/middleware"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/notification"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/permission"
+	"github.com/pavithraG777/cyber-security-platform/backend/internal/preencryption"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/role"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/rolepermission"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/user"
@@ -34,11 +35,14 @@ func SetupRouter(
 ) *gin.Engine {
 	configuredRouter,
 		fileMonitorService,
-		notificationModule :=
+		notificationModule,
+		preEncryptionWorker :=
 		SetupRouterWithRuntime(db, cfg)
 
+	runtimeContext := context.Background()
+
 	if err := notificationModule.Start(
-		context.Background(),
+		runtimeContext,
 	); err != nil {
 		panic(fmt.Errorf(
 			"failed to start notification worker: %w",
@@ -46,8 +50,19 @@ func SetupRouter(
 		))
 	}
 
+	if preEncryptionWorker != nil {
+		if err := preEncryptionWorker.Start(
+			runtimeContext,
+		); err != nil {
+			panic(fmt.Errorf(
+				"failed to start pre-encryption worker: %w",
+				err,
+			))
+		}
+	}
+
 	if err := fileMonitorService.Start(
-		context.Background(),
+		runtimeContext,
 	); err != nil {
 		panic(fmt.Errorf(
 			"failed to start file monitor service: %w",
@@ -65,6 +80,7 @@ func SetupRouterWithRuntime(
 	*gin.Engine,
 	*honeytoken.FileMonitorService,
 	*notification.Module,
+	*preencryption.Worker,
 ) {
 	router := gin.New()
 
@@ -244,6 +260,21 @@ func SetupRouterWithRuntime(
 		incidentAutomationService,
 	)
 
+	preEncryptionWorker,
+		preEncryptionHandler,
+		preEncryptionModuleErr :=
+		initializePreEncryptionModule(
+			db.Pool,
+			cfg,
+			appLogger.Log,
+		)
+	if preEncryptionModuleErr != nil {
+		panic(fmt.Errorf(
+			"failed to initialize pre-encryption module: %w",
+			preEncryptionModuleErr,
+		))
+	}
+
 	protectedFileHandler,
 		encryptionKeyHandler,
 		honeytokenHandler,
@@ -255,6 +286,7 @@ func SetupRouterWithRuntime(
 		cfg.Storage.CanaryStoragePath,
 		cfg.Storage.CanaryDeploymentRoot,
 		threatWorker,
+		preEncryptionWorker,
 	)
 	if err != nil {
 		panic(err)
@@ -369,6 +401,12 @@ func SetupRouterWithRuntime(
 	airisk.RegisterRoutes(
 		protected,
 		riskScoreHandler,
+		db.Pool,
+	)
+
+	preencryption.RegisterRoutes(
+		protected,
+		preEncryptionHandler,
 		db.Pool,
 	)
 
@@ -648,7 +686,8 @@ func SetupRouterWithRuntime(
 
 		return router,
 			fileMonitorService,
-			notificationModule
+			notificationModule,
+			preEncryptionWorker
 	}
 }
 
@@ -657,6 +696,7 @@ func initializeHoneytokenModule(
 	canaryStoragePath string,
 	canaryDeploymentRoot string,
 	threatWorker *honeytoken.ThreatWorker,
+	preEncryptionWorker *preencryption.Worker,
 ) (
 	*honeytoken.Handler,
 	*honeytoken.EncryptionKeyHandler,
@@ -790,6 +830,17 @@ func initializeHoneytokenModule(
 			"failed to connect File Event Service to Threat Engine: %w",
 			err,
 		)
+	}
+
+	if preEncryptionWorker != nil {
+		if err = fileEventService.SetPreEncryptionWorker(
+			preEncryptionWorker,
+		); err != nil {
+			return nil, nil, nil, nil, nil, nil, fmt.Errorf(
+				"failed to connect File Event Service to Pre-Encryption Engine: %w",
+				err,
+			)
+		}
 	}
 
 	fileEventHandler :=

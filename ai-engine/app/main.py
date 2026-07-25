@@ -16,6 +16,16 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings
+from app.pre_encryption_schemas import (
+    PreEncryptionRequest,
+    PreEncryptionResponse,
+)
+from app.pre_encryption_scoring import (
+    MODEL_NAME as PRE_ENCRYPTION_MODEL_NAME,
+    MODEL_VERSION as PRE_ENCRYPTION_MODEL_VERSION,
+    POLICY_VERSION as PRE_ENCRYPTION_POLICY_VERSION,
+    assess_pre_encryption_risk,
+)
 from app.schemas import (
     RiskEngineRequest,
     RiskEngineResponse,
@@ -127,6 +137,15 @@ async def health_check() -> dict[str, object]:
         "model_name": settings.model_name,
         "model_version": settings.model_version,
         "policy_version": settings.policy_version,
+        "pre_encryption_model_name": (
+            PRE_ENCRYPTION_MODEL_NAME
+        ),
+        "pre_encryption_model_version": (
+            PRE_ENCRYPTION_MODEL_VERSION
+        ),
+        "pre_encryption_policy_version": (
+            PRE_ENCRYPTION_POLICY_VERSION
+        ),
         "timestamp": datetime.now(
             timezone.utc
         ),
@@ -251,4 +270,147 @@ async def assess_incident_risk(
         request_id=engine_request.request_id,
         success=True,
         assessment=assessment,
+    )
+
+
+@app.post(
+    "/v1/ransomware/pre-encryption",
+    response_model=PreEncryptionResponse,
+    response_model_exclude_none=True,
+    dependencies=[
+        Depends(require_service_token),
+    ],
+)
+async def assess_pre_encryption(
+    engine_request: PreEncryptionRequest,
+    response: Response,
+    request_id_header: Annotated[
+        str | None,
+        Header(
+            alias=REQUEST_ID_HEADER,
+            convert_underscores=False,
+        ),
+    ] = None,
+) -> PreEncryptionResponse:
+    response.headers[
+        REQUEST_ID_HEADER
+    ] = str(engine_request.request_id)
+
+    processed_at = datetime.now(
+        timezone.utc
+    )
+
+    if not request_id_header:
+        return PreEncryptionResponse(
+            request_id=engine_request.request_id,
+            success=False,
+            error_code="REQUEST_ID_HEADER_REQUIRED",
+            error_message=(
+                "X-Request-ID header is required"
+            ),
+            processed_at=processed_at,
+        )
+
+    try:
+        header_request_id = UUID(
+            request_id_header.strip()
+        )
+    except ValueError:
+        return PreEncryptionResponse(
+            request_id=engine_request.request_id,
+            success=False,
+            error_code="INVALID_REQUEST_ID_HEADER",
+            error_message=(
+                "X-Request-ID header must contain "
+                "a valid UUID"
+            ),
+            processed_at=processed_at,
+        )
+
+    if (
+        header_request_id
+        != engine_request.request_id
+    ):
+        return PreEncryptionResponse(
+            request_id=engine_request.request_id,
+            success=False,
+            error_code="REQUEST_ID_MISMATCH",
+            error_message=(
+                "X-Request-ID header does not match "
+                "the request body"
+            ),
+            processed_at=processed_at,
+        )
+
+    try:
+        assessment = (
+            assess_pre_encryption_risk(
+                engine_request
+            )
+        )
+    except (
+        ArithmeticError,
+        ValueError,
+    ) as error:
+        logger.warning(
+            "Pre-encryption assessment rejected",
+            extra={
+                "request_id": str(
+                    engine_request.request_id
+                ),
+                "organization_id": str(
+                    engine_request.organization_id
+                ),
+                "detection_id": str(
+                    engine_request.detection_id
+                ),
+                "error": str(error),
+            },
+        )
+
+        return PreEncryptionResponse(
+            request_id=engine_request.request_id,
+            success=False,
+            error_code=(
+                "PRE_ENCRYPTION_ASSESSMENT_FAILED"
+            ),
+            error_message=(
+                "Unable to calculate pre-encryption "
+                "ransomware risk"
+            ),
+            processed_at=datetime.now(
+                timezone.utc
+            ),
+        )
+
+    logger.info(
+        "Pre-encryption assessment completed",
+        extra={
+            "request_id": str(
+                engine_request.request_id
+            ),
+            "organization_id": str(
+                engine_request.organization_id
+            ),
+            "detection_id": str(
+                engine_request.detection_id
+            ),
+            "ai_score": assessment.ai_score,
+            "combined_risk_score": (
+                assessment.combined_risk_score
+            ),
+            "risk_level": assessment.risk_level,
+            "classification": (
+                assessment.classification
+            ),
+        },
+    )
+
+    return PreEncryptionResponse(
+        request_id=engine_request.request_id,
+        success=True,
+        assessment=assessment,
+        processed_at=datetime.now(
+            timezone.utc
+        ),
     )
