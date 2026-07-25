@@ -14,6 +14,7 @@ type Config struct {
 	JWT          JWTConfig
 	Storage      StorageConfig
 	Log          LogConfig
+	AIRisk       AIRiskConfig
 	Notification NotificationConfig
 }
 
@@ -49,6 +50,16 @@ type StorageConfig struct {
 type LogConfig struct {
 	Level string
 	File  string
+}
+
+type AIRiskConfig struct {
+	Enabled bool
+
+	EngineURL    string
+	ServiceToken string
+
+	Timeout         time.Duration
+	DefaultValidity time.Duration
 }
 
 type NotificationConfig struct {
@@ -211,6 +222,24 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	aiRiskEngineTimeout, err :=
+		loadConfigurationDuration(
+			"AI_RISK_ENGINE_TIMEOUT",
+			15*time.Second,
+		)
+	if err != nil {
+		return nil, err
+	}
+
+	aiRiskDefaultValidity, err :=
+		loadConfigurationDuration(
+			"AI_RISK_DEFAULT_VALIDITY",
+			24*time.Hour,
+		)
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
 		App: AppConfig{
 			Name:     viper.GetString("APP_NAME"),
@@ -252,6 +281,24 @@ func Load() (*Config, error) {
 		Log: LogConfig{
 			Level: viper.GetString("LOG_LEVEL"),
 			File:  viper.GetString("LOG_FILE"),
+		},
+
+		AIRisk: AIRiskConfig{
+			Enabled: viper.GetBool(
+				"AI_RISK_ENABLED",
+			),
+			EngineURL: strings.TrimSpace(
+				viper.GetString(
+					"AI_RISK_ENGINE_URL",
+				),
+			),
+			ServiceToken: strings.TrimSpace(
+				viper.GetString(
+					"AI_RISK_SERVICE_TOKEN",
+				),
+			),
+			Timeout:         aiRiskEngineTimeout,
+			DefaultValidity: aiRiskDefaultValidity,
 		},
 
 		Notification: NotificationConfig{
@@ -386,6 +433,22 @@ func Load() (*Config, error) {
 }
 
 func setConfigurationDefaults() {
+	viper.SetDefault(
+		"AI_RISK_ENABLED",
+		true,
+	)
+	viper.SetDefault(
+		"AI_RISK_ENGINE_URL",
+		"http://127.0.0.1:8091",
+	)
+	viper.SetDefault(
+		"AI_RISK_ENGINE_TIMEOUT",
+		"15s",
+	)
+	viper.SetDefault(
+		"AI_RISK_DEFAULT_VALIDITY",
+		"24h",
+	)
 	viper.SetDefault(
 		"CANARY_STORAGE_PATH",
 		"./storage/canary",

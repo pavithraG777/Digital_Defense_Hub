@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/viper"
 
 	honeytoken "github.com/pavithraG777/cyber-security-platform/backend/internal/HoneyToken"
+	"github.com/pavithraG777/cyber-security-platform/backend/internal/airisk"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/auditlog"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/auth"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/config"
@@ -178,6 +179,45 @@ func SetupRouterWithRuntime(
 		))
 	}
 
+	// AI Ransomware Risk Scoring dependencies.
+	var riskScoreHandler *airisk.RiskScoreHandler
+
+	if cfg.AIRisk.Enabled {
+		riskScoreRepository := airisk.NewRepository(
+			db.Pool,
+		)
+
+		riskEngineClient, riskEngineClientErr :=
+			airisk.NewRiskEngineClient(
+				cfg.AIRisk.EngineURL,
+				cfg.AIRisk.ServiceToken,
+				cfg.AIRisk.Timeout,
+			)
+		if riskEngineClientErr != nil {
+			panic(fmt.Errorf(
+				"failed to initialize AI Risk Engine client: %w",
+				riskEngineClientErr,
+			))
+		}
+
+		riskScoreService, riskScoreServiceErr :=
+			airisk.NewService(
+				riskScoreRepository,
+				riskEngineClient,
+				cfg.AIRisk.DefaultValidity,
+			)
+		if riskScoreServiceErr != nil {
+			panic(fmt.Errorf(
+				"failed to initialize AI Risk Score service: %w",
+				riskScoreServiceErr,
+			))
+		}
+
+		riskScoreHandler =
+			airisk.NewRiskScoreHandler(
+				riskScoreService,
+			)
+	}
 	threatEngine, err := honeytoken.NewThreatEngine(
 		threatRepository,
 	)
@@ -323,6 +363,12 @@ func SetupRouterWithRuntime(
 	honeytoken.RegisterIncidentRoutes(
 		protected,
 		incidentHandler,
+		db.Pool,
+	)
+
+	airisk.RegisterRoutes(
+		protected,
+		riskScoreHandler,
 		db.Pool,
 	)
 
