@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/viper"
 
 	honeytoken "github.com/pavithraG777/cyber-security-platform/backend/internal/HoneyToken"
+	"github.com/pavithraG777/cyber-security-platform/backend/internal/adaptivedeception"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/airisk"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/auditlog"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/auth"
@@ -36,7 +37,9 @@ func SetupRouter(
 	configuredRouter,
 		fileMonitorService,
 		notificationModule,
-		preEncryptionWorker :=
+		preEncryptionWorker,
+		adaptiveDeceptionHealthWorker,
+		adaptiveDeceptionFingerprintWorker :=
 		SetupRouterWithRuntime(db, cfg)
 
 	runtimeContext := context.Background()
@@ -56,6 +59,30 @@ func SetupRouter(
 		); err != nil {
 			panic(fmt.Errorf(
 				"failed to start pre-encryption worker: %w",
+				err,
+			))
+		}
+	}
+
+	if adaptiveDeceptionFingerprintWorker != nil {
+		if err :=
+			adaptiveDeceptionFingerprintWorker.Start(
+				runtimeContext,
+			); err != nil {
+			panic(fmt.Errorf(
+				"failed to start adaptive deception fingerprint worker: %w",
+				err,
+			))
+		}
+	}
+
+	if adaptiveDeceptionHealthWorker != nil {
+		if err :=
+			adaptiveDeceptionHealthWorker.Start(
+				runtimeContext,
+			); err != nil {
+			panic(fmt.Errorf(
+				"failed to start adaptive deception health worker: %w",
 				err,
 			))
 		}
@@ -81,6 +108,8 @@ func SetupRouterWithRuntime(
 	*honeytoken.FileMonitorService,
 	*notification.Module,
 	*preencryption.Worker,
+	*adaptivedeception.HealthWorker,
+	*adaptivedeception.FingerprintWorker,
 ) {
 	router := gin.New()
 
@@ -292,6 +321,25 @@ func SetupRouterWithRuntime(
 		panic(err)
 	}
 
+	adaptiveDeceptionHealthWorker,
+		adaptiveDeceptionFingerprintWorker,
+		adaptiveDeceptionHealthHandler,
+		adaptiveDeceptionRotationHandler,
+		adaptiveDeceptionFingerprintHandler,
+		adaptiveDeceptionModuleErr :=
+		initializeAdaptiveDeceptionModule(
+			db.Pool,
+			cfg,
+			appLogger.Log,
+			fileMonitorService,
+		)
+	if adaptiveDeceptionModuleErr != nil {
+		panic(fmt.Errorf(
+			"failed to initialize adaptive deception module: %w",
+			adaptiveDeceptionModuleErr,
+		))
+	}
+
 	notificationModule, err :=
 		notification.NewModule(
 			db.Pool,
@@ -409,6 +457,30 @@ func SetupRouterWithRuntime(
 		preEncryptionHandler,
 		db.Pool,
 	)
+
+	if adaptiveDeceptionHealthHandler != nil {
+		adaptivedeception.RegisterHealthRoutes(
+			protected,
+			adaptiveDeceptionHealthHandler,
+			db.Pool,
+		)
+	}
+
+	if adaptiveDeceptionRotationHandler != nil {
+		adaptivedeception.RegisterRotationRoutes(
+			protected,
+			adaptiveDeceptionRotationHandler,
+			db.Pool,
+		)
+	}
+
+	if adaptiveDeceptionFingerprintHandler != nil {
+		adaptivedeception.RegisterFingerprintRoutes(
+			protected,
+			adaptiveDeceptionFingerprintHandler,
+			db.Pool,
+		)
+	}
 
 	notification.RegisterRoutes(
 		protected,
@@ -687,7 +759,9 @@ func SetupRouterWithRuntime(
 		return router,
 			fileMonitorService,
 			notificationModule,
-			preEncryptionWorker
+			preEncryptionWorker,
+			adaptiveDeceptionHealthWorker,
+			adaptiveDeceptionFingerprintWorker
 	}
 }
 

@@ -9,14 +9,15 @@ import (
 )
 
 type Config struct {
-	App           AppConfig
-	Database      DatabaseConfig
-	JWT           JWTConfig
-	Storage       StorageConfig
-	Log           LogConfig
-	AIRisk        AIRiskConfig
-	PreEncryption PreEncryptionConfig
-	Notification  NotificationConfig
+	App               AppConfig
+	Database          DatabaseConfig
+	JWT               JWTConfig
+	Storage           StorageConfig
+	Log               LogConfig
+	AIRisk            AIRiskConfig
+	PreEncryption     PreEncryptionConfig
+	AdaptiveDeception AdaptiveDeceptionConfig
+	Notification      NotificationConfig
 }
 
 type AppConfig struct {
@@ -271,6 +272,12 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	adaptiveDeceptionConfig, err :=
+		loadAdaptiveDeceptionConfig()
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
 		App: AppConfig{
 			Name:     viper.GetString("APP_NAME"),
@@ -348,6 +355,8 @@ func Load() (*Config, error) {
 			),
 			AnalysisTimeout: preEncryptionAnalysisTimeout,
 		},
+
+		AdaptiveDeception: adaptiveDeceptionConfig,
 
 		Notification: NotificationConfig{
 			Worker: NotificationWorkerConfig{
@@ -481,6 +490,8 @@ func Load() (*Config, error) {
 }
 
 func setConfigurationDefaults() {
+	setAdaptiveDeceptionDefaults()
+
 	viper.SetDefault(
 		"AI_RISK_ENABLED",
 		true,
@@ -855,6 +866,7 @@ func validatePreEncryptionConfig(
 
 	return nil
 }
+
 func validateNotificationConfig(
 	cfg NotificationConfig,
 ) error {

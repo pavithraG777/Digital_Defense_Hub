@@ -46,6 +46,9 @@ type FileEventService struct {
 
 	preEncryptionWorkerMu sync.RWMutex
 	preEncryptionWorker   FileEventAnalysisSubmitter
+
+	fingerprintWorkerMu sync.RWMutex
+	fingerprintWorker   FileEventAnalysisSubmitter
 }
 
 // SetThreatWorker connects persisted file events to the asynchronous Threat
@@ -81,6 +84,29 @@ func (s *FileEventService) SetThreatWorker(
 	return nil
 }
 
+// SetFingerprintWorker connects persisted CANARY_FILE events
+// to the Adaptive Deception fingerprint worker.
+func (s *FileMonitorService) SetFingerprintWorker(
+	worker FileEventAnalysisSubmitter,
+) error {
+	if s == nil ||
+		s.fileEventService == nil {
+		return errors.New(
+			"file monitor service is unavailable",
+		)
+	}
+
+	if worker == nil {
+		return errors.New(
+			"canary fingerprint worker is required",
+		)
+	}
+
+	return s.fileEventService.SetFingerprintWorker(
+		worker,
+	)
+}
+
 // SetPreEncryptionWorker connects persisted file events to the asynchronous
 // Pre-Encryption Ransomware Detection worker.
 func (s *FileEventService) SetPreEncryptionWorker(
@@ -108,6 +134,37 @@ func (s *FileEventService) SetPreEncryptionWorker(
 	}
 
 	s.preEncryptionWorker = worker
+
+	return nil
+}
+
+// SetFingerprintWorker connects persisted CANARY_FILE events
+// to the Adaptive Deception fingerprint worker.
+func (s *FileEventService) SetFingerprintWorker(
+	worker FileEventAnalysisSubmitter,
+) error {
+	if s == nil {
+		return errors.New(
+			"file event service is unavailable",
+		)
+	}
+
+	if worker == nil {
+		return errors.New(
+			"canary fingerprint worker is required",
+		)
+	}
+
+	s.fingerprintWorkerMu.Lock()
+	defer s.fingerprintWorkerMu.Unlock()
+
+	if s.fingerprintWorker != nil {
+		return errors.New(
+			"canary fingerprint worker is already configured",
+		)
+	}
+
+	s.fingerprintWorker = worker
 
 	return nil
 }
@@ -143,6 +200,31 @@ func (s *FileEventService) submitFileEventForPreEncryptionAnalysis(
 	s.preEncryptionWorkerMu.RLock()
 	worker := s.preEncryptionWorker
 	s.preEncryptionWorkerMu.RUnlock()
+
+	if worker == nil {
+		return
+	}
+
+	worker.TrySubmitFileEventAnalysis(
+		event.OrganizationID,
+		event.ID,
+	)
+}
+
+func (s *FileEventService) submitFileEventForFingerprintAnalysis(
+	event *FileEvent,
+) {
+	if s == nil ||
+		event == nil ||
+		event.ID == uuid.Nil ||
+		event.OrganizationID == uuid.Nil ||
+		event.CanaryFileID == nil {
+		return
+	}
+
+	s.fingerprintWorkerMu.RLock()
+	worker := s.fingerprintWorker
+	s.fingerprintWorkerMu.RUnlock()
 
 	if worker == nil {
 		return
@@ -454,6 +536,10 @@ func (s *FileEventService) CreateFileEvent(
 			s.submitFileEventForThreatAnalysis(event)
 
 			s.submitFileEventForPreEncryptionAnalysis(
+				event,
+			)
+
+			s.submitFileEventForFingerprintAnalysis(
 				event,
 			)
 

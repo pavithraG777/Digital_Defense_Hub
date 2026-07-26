@@ -44,7 +44,9 @@ func main() {
 	httpRouter,
 		fileMonitorService,
 		notificationModule,
-		preEncryptionWorker :=
+		preEncryptionWorker,
+		adaptiveDeceptionHealthWorker,
+		adaptiveDeceptionFingerprintWorker :=
 		router.SetupRouterWithRuntime(
 			db,
 			cfg,
@@ -95,6 +97,102 @@ func main() {
 		}
 	}
 
+	if adaptiveDeceptionFingerprintWorker != nil {
+		if err =
+			adaptiveDeceptionFingerprintWorker.Start(
+				runtimeContext,
+			); err != nil {
+			logger.Log.Error(
+				"Adaptive deception fingerprint worker failed to start",
+				zap.Error(err),
+			)
+
+			stopContext, cancelStop :=
+				context.WithTimeout(
+					context.Background(),
+					5*time.Second,
+				)
+
+			if preEncryptionWorker != nil {
+				if stopErr :=
+					preEncryptionWorker.Stop(
+						stopContext,
+					); stopErr != nil {
+					logger.Log.Error(
+						"Pre-encryption worker rollback failed",
+						zap.Error(stopErr),
+					)
+				}
+			}
+
+			if stopErr := notificationModule.Stop(
+				stopContext,
+			); stopErr != nil {
+				logger.Log.Error(
+					"Notification worker rollback failed",
+					zap.Error(stopErr),
+				)
+			}
+
+			cancelStop()
+			return
+		}
+	}
+
+	if adaptiveDeceptionHealthWorker != nil {
+		if err =
+			adaptiveDeceptionHealthWorker.Start(
+				runtimeContext,
+			); err != nil {
+			logger.Log.Error(
+				"Adaptive deception health worker failed to start",
+				zap.Error(err),
+			)
+
+			stopContext, cancelStop :=
+				context.WithTimeout(
+					context.Background(),
+					5*time.Second,
+				)
+
+			if adaptiveDeceptionFingerprintWorker != nil {
+				if stopErr :=
+					adaptiveDeceptionFingerprintWorker.Stop(
+						stopContext,
+					); stopErr != nil {
+					logger.Log.Error(
+						"Adaptive deception fingerprint worker rollback failed",
+						zap.Error(stopErr),
+					)
+				}
+			}
+
+			if preEncryptionWorker != nil {
+				if stopErr :=
+					preEncryptionWorker.Stop(
+						stopContext,
+					); stopErr != nil {
+					logger.Log.Error(
+						"Pre-encryption worker rollback failed",
+						zap.Error(stopErr),
+					)
+				}
+			}
+
+			if stopErr := notificationModule.Stop(
+				stopContext,
+			); stopErr != nil {
+				logger.Log.Error(
+					"Notification worker rollback failed",
+					zap.Error(stopErr),
+				)
+			}
+
+			cancelStop()
+			return
+		}
+	}
+
 	if err = fileMonitorService.Start(
 		runtimeContext,
 	); err != nil {
@@ -108,6 +206,30 @@ func main() {
 				context.Background(),
 				5*time.Second,
 			)
+
+		if adaptiveDeceptionHealthWorker != nil {
+			if stopErr :=
+				adaptiveDeceptionHealthWorker.Stop(
+					stopContext,
+				); stopErr != nil {
+				logger.Log.Error(
+					"Adaptive deception health worker rollback failed",
+					zap.Error(stopErr),
+				)
+			}
+		}
+
+		if adaptiveDeceptionFingerprintWorker != nil {
+			if stopErr :=
+				adaptiveDeceptionFingerprintWorker.Stop(
+					stopContext,
+				); stopErr != nil {
+				logger.Log.Error(
+					"Adaptive deception fingerprint worker rollback failed",
+					zap.Error(stopErr),
+				)
+			}
+		}
 
 		if preEncryptionWorker != nil {
 			if stopErr :=
@@ -211,6 +333,30 @@ func main() {
 			"File monitor shutdown failed",
 			zap.Error(err),
 		)
+	}
+
+	if adaptiveDeceptionHealthWorker != nil {
+		if err =
+			adaptiveDeceptionHealthWorker.Stop(
+				shutdownContext,
+			); err != nil {
+			logger.Log.Error(
+				"Adaptive deception health worker shutdown failed",
+				zap.Error(err),
+			)
+		}
+	}
+
+	if adaptiveDeceptionFingerprintWorker != nil {
+		if err =
+			adaptiveDeceptionFingerprintWorker.Stop(
+				shutdownContext,
+			); err != nil {
+			logger.Log.Error(
+				"Adaptive deception fingerprint worker shutdown failed",
+				zap.Error(err),
+			)
+		}
 	}
 
 	if preEncryptionWorker != nil {
