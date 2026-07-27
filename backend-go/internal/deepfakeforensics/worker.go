@@ -48,6 +48,8 @@ type AnalysisWorker struct {
 	engineClient *EngineClient
 	logger       *zap.Logger
 
+	trustEscalationPublisher MediaTrustEscalationPublisher
+
 	workerCount     int
 	pollInterval    time.Duration
 	analysisTimeout time.Duration
@@ -494,6 +496,11 @@ func (w *AnalysisWorker) processClaimedJob(
 		)
 		return
 	}
+
+	w.updateTrustAndEscalate(
+		parent,
+		*source,
+	)
 
 	w.processedCount.Add(1)
 

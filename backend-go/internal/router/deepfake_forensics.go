@@ -97,10 +97,34 @@ func initializeDeepfakeForensicsModule(
 		)
 	}
 
+	trustService, err :=
+		deepfakeforensics.NewTrustService(
+			repository,
+		)
+	if err != nil {
+		return nil, nil, fmt.Errorf(
+			"initialize media trust service: %w",
+			err,
+		)
+	}
+
+	modelService, err :=
+		deepfakeforensics.NewModelManagementService(
+			repository,
+		)
+	if err != nil {
+		return nil, nil, fmt.Errorf(
+			"initialize media model management service: %w",
+			err,
+		)
+	}
+
 	handler, err := deepfakeforensics.NewHandler(
 		assetService,
 		analysisService,
 		queryService,
+		trustService,
+		modelService,
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf(

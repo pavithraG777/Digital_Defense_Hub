@@ -72,6 +72,24 @@ func RegisterRoutes(
 		handler.StartMediaAnalysis,
 	)
 
+	assetGroup.GET(
+		"/:media_asset_id/trust-assessment",
+		middleware.RequirePermission(
+			databasePool,
+			permissionViewDeepfakeForensics,
+		),
+		handler.GetMediaTrustAssessment,
+	)
+
+	assetGroup.POST(
+		"/:media_asset_id/trust-assessment/recalculate",
+		middleware.RequirePermission(
+			databasePool,
+			permissionManageDeepfakeForensics,
+		),
+		handler.RecalculateMediaTrustAssessment,
+	)
+
 	jobGroup := forensicsGroup.Group(
 		"/analysis-jobs",
 	)
@@ -111,6 +129,37 @@ func RegisterRoutes(
 		),
 		handler.CancelAnalysisJob,
 	)
+
+	modelGroup := forensicsGroup.Group(
+		"/models",
+	)
+
+	modelGroup.GET(
+		"",
+		middleware.RequirePermission(
+			databasePool,
+			permissionViewDeepfakeForensics,
+		),
+		handler.ListManagedAIModels,
+	)
+
+	modelGroup.GET(
+		"/:model_id",
+		middleware.RequirePermission(
+			databasePool,
+			permissionViewDeepfakeForensics,
+		),
+		handler.GetManagedAIModel,
+	)
+
+	modelGroup.POST(
+		"/:model_id/versions/:model_version_id/activate",
+		middleware.RequirePermission(
+			databasePool,
+			permissionManageDeepfakeForensics,
+		),
+		handler.ActivateManagedAIModelVersion,
+	)
 }
 
 func validateRouteDependencies(
@@ -127,7 +176,9 @@ func validateRouteDependencies(
 	if handler == nil ||
 		handler.assetService == nil ||
 		handler.analysisService == nil ||
-		handler.queryService == nil {
+		handler.queryService == nil ||
+		handler.trustService == nil ||
+		handler.modelService == nil {
 		panic(
 			"deepfake forensics handler is required",
 		)

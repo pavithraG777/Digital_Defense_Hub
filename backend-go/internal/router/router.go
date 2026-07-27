@@ -398,6 +398,25 @@ func SetupRouterWithRuntime(
 		threatNotificationPublisher,
 	)
 
+	if deepfakeForensicsWorker != nil {
+		mediaTrustPublisher, mediaPublisherErr :=
+			newMediaTrustEscalationPublisher(
+				incidentService,
+				notificationModule.SecurityNotifications,
+			)
+		if mediaPublisherErr != nil {
+			panic(fmt.Errorf(
+				"failed to initialize media trust escalation publisher: %w",
+				mediaPublisherErr,
+			))
+		}
+
+		deepfakeForensicsWorker.
+			SetMediaTrustEscalationPublisher(
+				mediaTrustPublisher,
+			)
+	}
+
 	api := router.Group("/api")
 	v1 := api.Group("/v1")
 

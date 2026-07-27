@@ -21,19 +21,27 @@ type Handler struct {
 	assetService    *AssetService
 	analysisService *AnalysisService
 	queryService    *QueryService
+	trustService    *TrustService
+	modelService    *ModelManagementService
 }
 
 func NewHandler(
 	assetService *AssetService,
 	analysisService *AnalysisService,
 	queryService *QueryService,
+	trustService *TrustService,
+	modelService *ModelManagementService,
 ) (*Handler, error) {
 	if assetService == nil ||
 		!assetService.isAvailable() ||
 		analysisService == nil ||
 		!analysisService.isAvailable() ||
 		queryService == nil ||
-		!queryService.isAvailable() {
+		!queryService.isAvailable() ||
+		trustService == nil ||
+		!trustService.isAvailable() ||
+		modelService == nil ||
+		!modelService.isAvailable() {
 		return nil, errors.New(
 			"deepfake forensics handler dependencies are unavailable",
 		)
@@ -43,6 +51,8 @@ func NewHandler(
 		assetService:    assetService,
 		analysisService: analysisService,
 		queryService:    queryService,
+		trustService:    trustService,
+		modelService:    modelService,
 	}, nil
 }
 
@@ -547,7 +557,9 @@ func (h *Handler) authenticatedIdentity(
 	if h == nil ||
 		h.assetService == nil ||
 		h.analysisService == nil ||
-		h.queryService == nil {
+		h.queryService == nil ||
+		h.trustService == nil ||
+		h.modelService == nil {
 		response.InternalServerError(
 			c,
 			"Deepfake forensics handler is unavailable",
@@ -800,6 +812,10 @@ func handleMediaAPIError(
 		errors.Is(
 			err,
 			ErrAnalysisResultNotFound,
+		),
+		errors.Is(
+			err,
+			ErrMediaTrustAssessmentNotFound,
 		):
 		response.NotFound(
 			c,
@@ -837,6 +853,10 @@ func handleMediaAPIError(
 		errors.Is(
 			err,
 			ErrInvalidRepositoryInput,
+		),
+		errors.Is(
+			err,
+			ErrInsufficientMediaTrustEvidence,
 		):
 		response.BadRequest(
 			c,
@@ -868,6 +888,17 @@ func handleMediaAPIError(
 			http.StatusUnprocessableEntity,
 			"No compatible organization analysis model is registered",
 			nil,
+		)
+
+	case errors.Is(
+		err,
+		ErrAnalysisModelActivationRejected,
+	):
+		response.Error(
+			c,
+			http.StatusUnprocessableEntity,
+			"AI model version is not ready for activation",
+			err.Error(),
 		)
 
 	case errors.Is(
