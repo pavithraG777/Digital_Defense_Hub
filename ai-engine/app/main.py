@@ -16,6 +16,9 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings
+from app.media_forensics_routes import (
+    router as media_forensics_router,
+)
 from app.pre_encryption_schemas import (
     PreEncryptionRequest,
     PreEncryptionResponse,
@@ -414,3 +417,6 @@ async def assess_pre_encryption(
             timezone.utc
         ),
     )
+app.include_router(
+    media_forensics_router,
+)

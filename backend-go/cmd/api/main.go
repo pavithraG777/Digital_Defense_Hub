@@ -46,7 +46,8 @@ func main() {
 		notificationModule,
 		preEncryptionWorker,
 		adaptiveDeceptionHealthWorker,
-		adaptiveDeceptionFingerprintWorker :=
+		adaptiveDeceptionFingerprintWorker,
+		deepfakeForensicsWorker :=
 		router.SetupRouterWithRuntime(
 			db,
 			cfg,
@@ -193,6 +194,72 @@ func main() {
 		}
 	}
 
+	if deepfakeForensicsWorker != nil {
+		if err =
+			deepfakeForensicsWorker.Start(
+				runtimeContext,
+			); err != nil {
+			logger.Log.Error(
+				"Deepfake forensics worker failed to start",
+				zap.Error(err),
+			)
+
+			stopContext, cancelStop :=
+				context.WithTimeout(
+					context.Background(),
+					5*time.Second,
+				)
+
+			if adaptiveDeceptionHealthWorker != nil {
+				if stopErr :=
+					adaptiveDeceptionHealthWorker.Stop(
+						stopContext,
+					); stopErr != nil {
+					logger.Log.Error(
+						"Adaptive deception health worker rollback failed",
+						zap.Error(stopErr),
+					)
+				}
+			}
+
+			if adaptiveDeceptionFingerprintWorker != nil {
+				if stopErr :=
+					adaptiveDeceptionFingerprintWorker.Stop(
+						stopContext,
+					); stopErr != nil {
+					logger.Log.Error(
+						"Adaptive deception fingerprint worker rollback failed",
+						zap.Error(stopErr),
+					)
+				}
+			}
+
+			if preEncryptionWorker != nil {
+				if stopErr :=
+					preEncryptionWorker.Stop(
+						stopContext,
+					); stopErr != nil {
+					logger.Log.Error(
+						"Pre-encryption worker rollback failed",
+						zap.Error(stopErr),
+					)
+				}
+			}
+
+			if stopErr := notificationModule.Stop(
+				stopContext,
+			); stopErr != nil {
+				logger.Log.Error(
+					"Notification worker rollback failed",
+					zap.Error(stopErr),
+				)
+			}
+
+			cancelStop()
+			return
+		}
+	}
+
 	if err = fileMonitorService.Start(
 		runtimeContext,
 	); err != nil {
@@ -206,6 +273,18 @@ func main() {
 				context.Background(),
 				5*time.Second,
 			)
+
+		if deepfakeForensicsWorker != nil {
+			if stopErr :=
+				deepfakeForensicsWorker.Stop(
+					stopContext,
+				); stopErr != nil {
+				logger.Log.Error(
+					"Deepfake forensics worker rollback failed",
+					zap.Error(stopErr),
+				)
+			}
+		}
 
 		if adaptiveDeceptionHealthWorker != nil {
 			if stopErr :=
@@ -333,6 +412,18 @@ func main() {
 			"File monitor shutdown failed",
 			zap.Error(err),
 		)
+	}
+
+	if deepfakeForensicsWorker != nil {
+		if err =
+			deepfakeForensicsWorker.Stop(
+				shutdownContext,
+			); err != nil {
+			logger.Log.Error(
+				"Deepfake forensics worker shutdown failed",
+				zap.Error(err),
+			)
+		}
 	}
 
 	if adaptiveDeceptionHealthWorker != nil {

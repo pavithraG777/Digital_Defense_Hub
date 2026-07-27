@@ -38,3 +38,6 @@ build/
 dist/
 *.egg-info/
 .eggs/
+
+# Generated media-analysis inputs and job artifacts
+storage/media-analysis/

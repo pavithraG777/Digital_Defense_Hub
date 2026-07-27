@@ -18,6 +18,7 @@ import (
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/auth"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/config"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/database"
+	"github.com/pavithraG777/cyber-security-platform/backend/internal/deepfakeforensics"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/health"
 	appLogger "github.com/pavithraG777/cyber-security-platform/backend/internal/logger"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/middleware"
@@ -39,7 +40,8 @@ func SetupRouter(
 		notificationModule,
 		preEncryptionWorker,
 		adaptiveDeceptionHealthWorker,
-		adaptiveDeceptionFingerprintWorker :=
+		adaptiveDeceptionFingerprintWorker,
+		deepfakeForensicsWorker :=
 		SetupRouterWithRuntime(db, cfg)
 
 	runtimeContext := context.Background()
@@ -88,6 +90,18 @@ func SetupRouter(
 		}
 	}
 
+	if deepfakeForensicsWorker != nil {
+		if err :=
+			deepfakeForensicsWorker.Start(
+				runtimeContext,
+			); err != nil {
+			panic(fmt.Errorf(
+				"failed to start deepfake forensics worker: %w",
+				err,
+			))
+		}
+	}
+
 	if err := fileMonitorService.Start(
 		runtimeContext,
 	); err != nil {
@@ -110,6 +124,7 @@ func SetupRouterWithRuntime(
 	*preencryption.Worker,
 	*adaptivedeception.HealthWorker,
 	*adaptivedeception.FingerprintWorker,
+	*deepfakeforensics.AnalysisWorker,
 ) {
 	router := gin.New()
 
@@ -340,6 +355,21 @@ func SetupRouterWithRuntime(
 		))
 	}
 
+	deepfakeForensicsHandler,
+		deepfakeForensicsWorker,
+		deepfakeForensicsModuleErr :=
+		initializeDeepfakeForensicsModule(
+			db.Pool,
+			cfg,
+			appLogger.Log,
+		)
+	if deepfakeForensicsModuleErr != nil {
+		panic(fmt.Errorf(
+			"failed to initialize deepfake forensics module: %w",
+			deepfakeForensicsModuleErr,
+		))
+	}
+
 	notificationModule, err :=
 		notification.NewModule(
 			db.Pool,
@@ -478,6 +508,14 @@ func SetupRouterWithRuntime(
 		adaptivedeception.RegisterFingerprintRoutes(
 			protected,
 			adaptiveDeceptionFingerprintHandler,
+			db.Pool,
+		)
+	}
+
+	if deepfakeForensicsHandler != nil {
+		deepfakeforensics.RegisterRoutes(
+			protected,
+			deepfakeForensicsHandler,
 			db.Pool,
 		)
 	}
@@ -761,7 +799,8 @@ func SetupRouterWithRuntime(
 			notificationModule,
 			preEncryptionWorker,
 			adaptiveDeceptionHealthWorker,
-			adaptiveDeceptionFingerprintWorker
+			adaptiveDeceptionFingerprintWorker,
+			deepfakeForensicsWorker
 	}
 }
 

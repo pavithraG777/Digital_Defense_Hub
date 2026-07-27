@@ -17,6 +17,7 @@ type Config struct {
 	AIRisk            AIRiskConfig
 	PreEncryption     PreEncryptionConfig
 	AdaptiveDeception AdaptiveDeceptionConfig
+	DeepfakeForensics DeepfakeForensicsConfig
 	Notification      NotificationConfig
 }
 
@@ -278,6 +279,12 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	deepfakeForensicsConfig, err :=
+		loadDeepfakeForensicsConfig()
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
 		App: AppConfig{
 			Name:     viper.GetString("APP_NAME"),
@@ -357,6 +364,8 @@ func Load() (*Config, error) {
 		},
 
 		AdaptiveDeception: adaptiveDeceptionConfig,
+
+		DeepfakeForensics: deepfakeForensicsConfig,
 
 		Notification: NotificationConfig{
 			Worker: NotificationWorkerConfig{
@@ -491,6 +500,7 @@ func Load() (*Config, error) {
 
 func setConfigurationDefaults() {
 	setAdaptiveDeceptionDefaults()
+	setDeepfakeForensicsDefaults()
 
 	viper.SetDefault(
 		"AI_RISK_ENABLED",
@@ -774,6 +784,12 @@ func validate(
 		return fmt.Errorf(
 			"CANARY_DEPLOYMENT_ROOT is required",
 		)
+	}
+
+	if err := validateDeepfakeForensicsConfig(
+		cfg.DeepfakeForensics,
+	); err != nil {
+		return err
 	}
 
 	if err := validateNotificationConfig(
