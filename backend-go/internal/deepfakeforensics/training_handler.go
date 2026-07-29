@@ -123,3 +123,21 @@ func (h *Handler) ListTrainingJobs(c *gin.Context) {
 	}
 	response.OK(c, "Training jobs retrieved successfully", result)
 }
+
+func (h *Handler) CancelTrainingJob(c *gin.Context) {
+	organizationID, _, ok := h.authenticatedIdentity(c)
+	if !ok {
+		return
+	}
+	jobID, ok := handlerPathUUID(c, "training_job_id")
+	if !ok {
+		response.BadRequest(c, "Invalid training job ID", nil)
+		return
+	}
+	job, err := h.trainingService.CancelJob(c.Request.Context(), organizationID, jobID)
+	if err != nil {
+		handleMediaAPIError(c, err, "Unable to cancel training job")
+		return
+	}
+	response.OK(c, "Training job cancelled successfully", job)
+}

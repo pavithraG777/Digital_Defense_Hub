@@ -273,6 +273,21 @@ func (s *TrainingService) ListJobs(ctx context.Context, organizationID uuid.UUID
 	return &TrainingJobListResponse{Items: items, Total: total, Page: page, PageSize: pageSize, TotalPages: int(math.Ceil(float64(total) / float64(pageSize)))}, nil
 }
 
+// CancelJob only cancels work that has not begun. A running training process
+// requires an execution-engine cancellation contract and is deliberately not
+// marked cancelled until that contract exists.
+func (s *TrainingService) CancelJob(ctx context.Context, organizationID, jobID uuid.UUID) (*TrainingJob, error) {
+	if !s.isAvailable() || ctx == nil || organizationID == uuid.Nil || jobID == uuid.Nil {
+		return nil, ErrInvalidRepositoryInput
+	}
+	row := s.repository.databasePool.QueryRow(ctx, `UPDATE ml_training_jobs SET status='CANCELLED',cancelled_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$2 AND status='QUEUED' RETURNING id,job_number,dataset_version_id,ai_model_id,status,split_configuration,created_at`, jobID, organizationID)
+	job, err := scanTrainingJob(row)
+	if err == pgx.ErrNoRows {
+		return nil, fmt.Errorf("%w: only queued training jobs can be cancelled", ErrAnalysisJobConflict)
+	}
+	return job, err
+}
+
 type trainingRow interface{ Scan(...any) error }
 
 func scanTrainingDataset(row trainingRow) (*TrainingDataset, error) {

@@ -254,6 +254,7 @@ func RegisterRoutes(
 	trainingGroup.POST("/datasets/:dataset_id/versions/:dataset_version_id/validate", middleware.RequirePermission(databasePool, permissionManageDeepfakeForensics), handler.ValidateTrainingDatasetVersion)
 	trainingGroup.POST("/jobs", middleware.RequirePermission(databasePool, permissionManageDeepfakeForensics), handler.CreateTrainingJob)
 	trainingGroup.GET("/jobs", middleware.RequirePermission(databasePool, permissionViewDeepfakeForensics), handler.ListTrainingJobs)
+	trainingGroup.POST("/jobs/:training_job_id/cancel", middleware.RequirePermission(databasePool, permissionManageDeepfakeForensics), handler.CancelTrainingJob)
 }
 
 func validateRouteDependencies(

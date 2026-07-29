@@ -70,6 +70,14 @@ class Settings(BaseSettings):
         default=Path("storage/media-analysis"),
         validation_alias="MEDIA_FORENSICS_WORKSPACE_ROOT",
     )
+    media_backend_storage_root: Path = Field(
+        default=Path(
+            "../backend-go/storage/media-analysis"
+        ),
+        validation_alias=(
+            "MEDIA_FORENSICS_BACKEND_STORAGE_ROOT"
+        ),
+    )
 
     media_backend_storage_root: Path = Field(
         default=Path(
@@ -138,6 +146,27 @@ class Settings(BaseSettings):
     media_allow_heuristic_fallback: bool = Field(
         default=True,
         validation_alias="MEDIA_FORENSICS_ALLOW_HEURISTIC_FALLBACK",
+    )
+
+    training_dataset_root: Path = Field(
+        default=Path("/datasets"),
+        validation_alias="ML_TRAINING_DATASET_ROOT",
+    )
+    training_artifact_root: Path = Field(
+        default=Path("models/trained"),
+        validation_alias="ML_TRAINING_ARTIFACT_ROOT",
+    )
+    training_maximum_epochs: int = Field(
+        default=20,
+        ge=1,
+        le=100,
+        validation_alias="ML_TRAINING_MAXIMUM_EPOCHS",
+    )
+    training_maximum_samples: int = Field(
+        default=100_000,
+        ge=4,
+        le=1_000_000,
+        validation_alias="ML_TRAINING_MAXIMUM_SAMPLES",
     )
 
     @field_validator("service_token")

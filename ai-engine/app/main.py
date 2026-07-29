@@ -34,6 +34,7 @@ from app.schemas import (
     RiskEngineResponse,
 )
 from app.scoring import IncidentRiskScorer
+from app.training_routes import router as training_router
 from app.security import (
     REQUEST_ID_HEADER,
     require_service_token,
@@ -420,3 +421,4 @@ async def assess_pre_encryption(
 app.include_router(
     media_forensics_router,
 )
+app.include_router(training_router)
