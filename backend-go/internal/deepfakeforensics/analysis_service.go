@@ -110,16 +110,33 @@ func (s *AnalysisService) StartMediaAnalysis(
 	}
 
 	reusableJobs := map[string]AIAnalysisJob{}
-	if !request.ForceReanalysis {
-		reusableJobs, err =
-			s.repository.findReusableAnalysisJobs(
-				ctx,
-				organizationID,
-				mediaAssetID,
-				jobTypes,
-			)
-		if err != nil {
-			return nil, err
+	reusableJobs, err =
+		s.repository.findReusableAnalysisJobs(
+			ctx,
+			organizationID,
+			mediaAssetID,
+			jobTypes,
+		)
+	if err != nil {
+		return nil, err
+	}
+	if request.ForceReanalysis {
+		for jobType, reusableJob := range reusableJobs {
+			switch NormalizeConstant(
+				reusableJob.Status,
+			) {
+			case JobStatusQueued,
+				JobStatusProcessing,
+				JobStatusRetrying:
+				// Active work is always reused. Force only
+				// bypasses completed reusable results.
+
+			default:
+				delete(
+					reusableJobs,
+					jobType,
+				)
+			}
 		}
 	}
 
@@ -520,6 +537,11 @@ func (r *Repository) findReusableAnalysisJobs(
 				)
 			ORDER BY
 				job_type,
+				CASE
+					WHEN status IN ($4, $5, $6)
+						THEN 0
+					ELSE 1
+				END,
 				created_at DESC,
 				id DESC
 		`,

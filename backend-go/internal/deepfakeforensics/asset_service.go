@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -113,16 +114,21 @@ func (s *AssetService) UploadMediaAsset(
 		return nil, err
 	}
 
-	storedFile, err := s.fileManager.Store(
+	storedFile, storeErr := s.fileManager.Store(
 		ctx,
 		organizationID,
 		originalFileName,
 		declaredMimeType,
 		source,
 	)
-	if err != nil {
-		return nil, err
+	if storeErr != nil &&
+		storedFile == nil {
+		return nil, storeErr
 	}
+	quarantined := errors.Is(
+		storeErr,
+		ErrMediaUploadQuarantined,
+	)
 
 	metadata["upload_source"] =
 		mediaAssetSourceDirectUpload
@@ -130,7 +136,16 @@ func (s *AssetService) UploadMediaAsset(
 		normalizeMimeType(declaredMimeType)
 	metadata["detected_media_type"] =
 		storedFile.MediaType
-	metadata["storage_encrypted"] = false
+	metadata["storage_encrypted"] =
+		storedFile.IsEncrypted
+	if quarantined {
+		metadata["quarantined_at"] =
+			time.Now().UTC()
+		metadata["quarantine_reason"] =
+			storedFile.QuarantineReason
+		metadata["quarantine_source"] =
+			"AUTOMATIC_UPLOAD_VALIDATION"
+	}
 
 	fileExtension :=
 		storedFile.FileExtension
@@ -154,10 +169,12 @@ func (s *AssetService) UploadMediaAsset(
 
 				FileHash: storedFile.FileHash,
 
-				IsEncrypted:         false,
-				EncryptionAlgorithm: nil,
+				IsEncrypted: storedFile.IsEncrypted,
+				EncryptionAlgorithm: storedFile.
+					EncryptionAlgorithm,
 
 				SourceType: sourceType,
+				Status:     storedFile.Status,
 				UploadedBy: uploadedBy,
 
 				Metadata: metadata,
@@ -176,6 +193,30 @@ func (s *AssetService) UploadMediaAsset(
 		}
 
 		return nil, createErr
+	}
+
+	if quarantined {
+		eventErr :=
+			s.repository.RecordMediaSecurityEvent(
+				ctx,
+				organizationID,
+				asset.ID,
+				&uploadedBy,
+				"QUARANTINED",
+				storedFile.QuarantineReason,
+				map[string]any{
+					"automatic": true,
+					"source":    "UPLOAD_VALIDATION",
+				},
+			)
+		if eventErr != nil {
+			return asset, fmt.Errorf(
+				"%w: record quarantine event: %v",
+				storeErr,
+				eventErr,
+			)
+		}
+		return asset, storeErr
 	}
 
 	return asset, nil

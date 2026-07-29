@@ -3,8 +3,7 @@ package deepfakeforensics
 import (
 	"bufio"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -13,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 	"unicode"
 
 	"github.com/google/uuid"
@@ -38,12 +36,20 @@ var (
 	ErrManagedMediaPathRequired = errors.New(
 		"media file path is outside the managed storage root",
 	)
+	ErrMediaUploadQuarantined = errors.New(
+		"media analysis upload was quarantined",
+	)
+	ErrMediaStorageIntegrity = errors.New(
+		"media storage integrity verification failed",
+	)
 )
 
 type mediaUploadType struct {
 	MediaType string
 	MimeType  string
 }
+
+const mediaStorageEncryptionAlgorithm = "AES-256-CTR-HMAC-SHA256"
 
 var supportedMediaUploadTypes = map[string]mediaUploadType{
 	".jpg": {
@@ -141,18 +147,51 @@ type StoredMediaFile struct {
 
 	FileSizeBytes int64
 	FileHash      string
+
+	IsEncrypted         bool
+	EncryptionAlgorithm *string
+	Status              string
+	QuarantineReason    string
+}
+
+// AssetStorageOptions enables encrypted-at-rest storage
+// and automatic isolation of malformed uploads.
+type AssetStorageOptions struct {
+	EncryptionEnabled   bool
+	EncryptionKeyBase64 string
+	QuarantineMalformed bool
 }
 
 // AssetFileManager owns organization-isolated local media
 // upload storage.
 type AssetFileManager struct {
-	rootPath     string
-	maximumBytes int64
+	rootPath       string
+	runtimePath    string
+	quarantinePath string
+	maximumBytes   int64
+
+	encryptionEnabled   bool
+	encryptionKey       []byte
+	quarantineMalformed bool
 }
 
 func NewAssetFileManager(
 	rootPath string,
 	maximumBytes int64,
+) (*AssetFileManager, error) {
+	return NewSecureAssetFileManager(
+		rootPath,
+		maximumBytes,
+		AssetStorageOptions{},
+	)
+}
+
+// NewSecureAssetFileManager creates an organization-isolated
+// storage manager with optional authenticated encryption.
+func NewSecureAssetFileManager(
+	rootPath string,
+	maximumBytes int64,
+	options AssetStorageOptions,
 ) (*AssetFileManager, error) {
 	rootPath = strings.TrimSpace(rootPath)
 	if rootPath == "" {
@@ -163,6 +202,23 @@ func NewAssetFileManager(
 	if maximumBytes <= 0 {
 		maximumBytes =
 			defaultMaximumMediaUploadBytes
+	}
+
+	var encryptionKey []byte
+	if options.EncryptionEnabled {
+		decodedKey, decodeErr :=
+			base64.StdEncoding.DecodeString(
+				strings.TrimSpace(
+					options.EncryptionKeyBase64,
+				),
+			)
+		if decodeErr != nil ||
+			len(decodedKey) != 32 {
+			return nil, errors.New(
+				"media storage encryption key must be a base64-encoded 32-byte key",
+			)
+		}
+		encryptionKey = decodedKey
 	}
 
 	absoluteRoot, err := filepath.Abs(rootPath)
@@ -203,10 +259,35 @@ func NewAssetFileManager(
 		)
 	}
 
-	return &AssetFileManager{
-		rootPath:     absoluteRoot,
-		maximumBytes: maximumBytes,
-	}, nil
+	manager := &AssetFileManager{
+		rootPath:       absoluteRoot,
+		runtimePath:    filepath.Join(absoluteRoot, "_runtime"),
+		quarantinePath: filepath.Join(absoluteRoot, "_quarantine"),
+		maximumBytes:   maximumBytes,
+
+		encryptionEnabled: options.EncryptionEnabled,
+		encryptionKey: append(
+			[]byte(nil),
+			encryptionKey...,
+		),
+		quarantineMalformed: options.QuarantineMalformed,
+	}
+
+	for _, directory := range []string{
+		manager.runtimePath,
+		manager.quarantinePath,
+	} {
+		if err = manager.ensureManagedDirectory(
+			directory,
+		); err != nil {
+			return nil, fmt.Errorf(
+				"initialize protected media storage directory: %w",
+				err,
+			)
+		}
+	}
+
+	return manager, nil
 }
 
 // Store validates, hashes and atomically persists one
@@ -266,149 +347,53 @@ func (m *AssetFileManager) Store(
 		header,
 	)
 	if err = validateMediaUploadMimeType(
+		extension,
 		uploadType,
 		declaredMimeType,
 		detectedMimeType,
 		header,
 	); err != nil {
-		return nil, err
-	}
+		if m.quarantineMalformed {
+			quarantinedFile, quarantineErr :=
+				m.persistMediaStream(
+					ctx,
+					organizationID,
+					normalizedFileName,
+					extension,
+					uploadType,
+					bufferedSource,
+					true,
+					err.Error(),
+				)
+			if quarantineErr != nil {
+				return nil, fmt.Errorf(
+					"%w; quarantine failed: %v",
+					err,
+					quarantineErr,
+				)
+			}
 
-	organizationDirectory := filepath.Join(
-		m.rootPath,
-		organizationID.String(),
-		time.Now().UTC().Format("20060102"),
-	)
-	if err = m.validateManagedPath(
-		organizationDirectory,
-	); err != nil {
-		return nil, err
-	}
-	if err = m.ensureManagedDirectory(
-		organizationDirectory,
-	); err != nil {
-		return nil, fmt.Errorf(
-			"create organization media directory: %w",
-			err,
-		)
-	}
-
-	storageID := uuid.New()
-	storedFileName :=
-		storageID.String() + extension
-	finalPath := filepath.Join(
-		organizationDirectory,
-		storedFileName,
-	)
-	temporaryPath := filepath.Join(
-		organizationDirectory,
-		".upload-"+storageID.String()+".tmp",
-	)
-
-	if err = m.validateManagedPath(
-		finalPath,
-	); err != nil {
-		return nil, err
-	}
-	if err = m.validateManagedPath(
-		temporaryPath,
-	); err != nil {
-		return nil, err
-	}
-
-	output, err := os.OpenFile(
-		temporaryPath,
-		os.O_WRONLY|
-			os.O_CREATE|
-			os.O_EXCL,
-		0o600,
-	)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"create temporary media upload: %w",
-			err,
-		)
-	}
-
-	temporaryFileExists := true
-	defer func() {
-		_ = output.Close()
-		if temporaryFileExists {
-			_ = os.Remove(temporaryPath)
+			return quarantinedFile,
+				fmt.Errorf(
+					"%w: %v",
+					ErrMediaUploadQuarantined,
+					err,
+				)
 		}
-	}()
 
-	hasher := sha256.New()
-	limitedSource := io.LimitReader(
+		return nil, err
+	}
+
+	return m.persistMediaStream(
+		ctx,
+		organizationID,
+		normalizedFileName,
+		extension,
+		uploadType,
 		bufferedSource,
-		m.maximumBytes+1,
+		false,
+		"",
 	)
-
-	writtenBytes, copyErr := io.CopyBuffer(
-		io.MultiWriter(
-			output,
-			hasher,
-		),
-		limitedSource,
-		make(
-			[]byte,
-			mediaUploadBufferSize,
-		),
-	)
-	if copyErr != nil {
-		return nil, fmt.Errorf(
-			"store media upload: %w",
-			copyErr,
-		)
-	}
-	if writtenBytes > m.maximumBytes {
-		return nil, ErrMediaUploadTooLarge
-	}
-	if writtenBytes == 0 {
-		return nil, fmt.Errorf(
-			"%w: uploaded file is empty",
-			ErrInvalidMediaUpload,
-		)
-	}
-
-	if err = output.Sync(); err != nil {
-		return nil, fmt.Errorf(
-			"synchronize media upload: %w",
-			err,
-		)
-	}
-	if err = output.Close(); err != nil {
-		return nil, fmt.Errorf(
-			"close media upload: %w",
-			err,
-		)
-	}
-
-	if err = os.Rename(
-		temporaryPath,
-		finalPath,
-	); err != nil {
-		return nil, fmt.Errorf(
-			"publish media upload: %w",
-			err,
-		)
-	}
-	temporaryFileExists = false
-
-	return &StoredMediaFile{
-		OriginalFileName: normalizedFileName,
-		StoredFileName:   storedFileName,
-		StoragePath:      finalPath,
-
-		MediaType:     uploadType.MediaType,
-		MimeType:      uploadType.MimeType,
-		FileExtension: extension,
-
-		FileSizeBytes: writtenBytes,
-		FileHash: hex.EncodeToString(
-			hasher.Sum(nil),
-		),
-	}, nil
 }
 
 // Remove deletes one file only when it resolves inside the
@@ -584,6 +569,7 @@ func normalizeMediaUploadName(
 }
 
 func validateMediaUploadMimeType(
+	extension string,
 	uploadType mediaUploadType,
 	declaredMimeType string,
 	detectedMimeType string,
@@ -630,6 +616,16 @@ func validateMediaUploadMimeType(
 		) {
 		return fmt.Errorf(
 			"%w: document is not a valid PDF",
+			ErrUnsupportedMediaUpload,
+		)
+	}
+
+	if !matchesExpectedMediaSignature(
+		extension,
+		header,
+	) {
+		return fmt.Errorf(
+			"%w: file signature does not match extension",
 			ErrUnsupportedMediaUpload,
 		)
 	}

@@ -49,6 +49,19 @@ type MediaAnalysisAsset struct {
 	DeletedAt  *time.Time `json:"-"`
 }
 
+// MediaAssetSecurityEvent is an immutable organization
+// audit record for quarantine, integrity and retention.
+type MediaAssetSecurityEvent struct {
+	ID             uuid.UUID      `json:"id"`
+	OrganizationID uuid.UUID      `json:"organization_id"`
+	MediaAssetID   uuid.UUID      `json:"media_asset_id"`
+	EventType      string         `json:"event_type"`
+	ActorUserID    *uuid.UUID     `json:"actor_user_id,omitempty"`
+	Reason         string         `json:"reason"`
+	Metadata       map[string]any `json:"metadata"`
+	CreatedAt      time.Time      `json:"created_at"`
+}
+
 // AIAnalysisJob represents one queued offline analysis
 // request for a media asset or forensic evidence item.
 type AIAnalysisJob struct {

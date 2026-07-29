@@ -52,9 +52,17 @@ func initializeDeepfakeForensicsModule(
 	}
 
 	fileManager, err :=
-		deepfakeforensics.NewAssetFileManager(
+		deepfakeforensics.NewSecureAssetFileManager(
 			moduleConfig.StoragePath,
 			moduleConfig.MaximumUploadBytes,
+			deepfakeforensics.AssetStorageOptions{
+				EncryptionEnabled: moduleConfig.
+					StorageEncryptionEnabled,
+				EncryptionKeyBase64: moduleConfig.
+					StorageEncryptionKey,
+				QuarantineMalformed: moduleConfig.
+					QuarantineMalformed,
+			},
 		)
 	if err != nil {
 		return nil, nil, fmt.Errorf(
@@ -111,6 +119,7 @@ func initializeDeepfakeForensicsModule(
 	modelService, err :=
 		deepfakeforensics.NewModelManagementService(
 			repository,
+			moduleConfig.StoragePath,
 		)
 	if err != nil {
 		return nil, nil, fmt.Errorf(
@@ -119,12 +128,30 @@ func initializeDeepfakeForensicsModule(
 		)
 	}
 
+	reportService, err :=
+		deepfakeforensics.NewForensicReportService(
+			repository,
+		)
+	if err != nil {
+		return nil, nil, fmt.Errorf(
+			"initialize media forensic report service: %w",
+			err,
+		)
+	}
+
+	trainingService, err := deepfakeforensics.NewTrainingService(repository)
+	if err != nil {
+		return nil, nil, fmt.Errorf("initialize ML training service: %w", err)
+	}
+
 	handler, err := deepfakeforensics.NewHandler(
 		assetService,
 		analysisService,
 		queryService,
 		trustService,
 		modelService,
+		reportService,
+		trainingService,
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf(
@@ -159,6 +186,25 @@ func initializeDeepfakeForensicsModule(
 	if err != nil {
 		return nil, nil, fmt.Errorf(
 			"initialize deepfake forensics worker: %w",
+			err,
+		)
+	}
+
+	if err = worker.SetStorageSecurity(
+		fileManager,
+		deepfakeforensics.AnalysisMaintenancePolicy{
+			Interval: moduleConfig.
+				MaintenanceInterval,
+			StaleProcessingTimeout: moduleConfig.
+				StaleProcessingTimeout,
+			TemporaryFileTTL: moduleConfig.
+				TemporaryFileTTL,
+			RetentionDays: moduleConfig.
+				RetentionDays,
+		},
+	); err != nil {
+		return nil, nil, fmt.Errorf(
+			"configure deepfake forensics storage security: %w",
 			err,
 		)
 	}

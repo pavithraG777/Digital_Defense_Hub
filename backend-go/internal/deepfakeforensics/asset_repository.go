@@ -17,6 +17,8 @@ const (
 	mediaAssetHashAlgorithmSHA256 = "SHA256"
 	mediaAssetSourceDirectUpload  = "DIRECT_UPLOAD"
 	mediaAssetStatusAvailable     = "AVAILABLE"
+	mediaAssetStatusQuarantined   = "QUARANTINED"
+	mediaAssetStatusArchived      = "ARCHIVED"
 )
 
 type databaseRowScanner interface {
@@ -47,6 +49,10 @@ func (r *Repository) CreateMediaAsset(
 	)
 	if sourceType == "" {
 		sourceType = mediaAssetSourceDirectUpload
+	}
+	status := NormalizeConstant(input.Status)
+	if status == "" {
+		status = mediaAssetStatusAvailable
 	}
 
 	metadata := input.Metadata
@@ -153,7 +159,7 @@ func (r *Repository) CreateMediaAsset(
 		input.IsEncrypted,
 		input.EncryptionAlgorithm,
 		sourceType,
-		mediaAssetStatusAvailable,
+		status,
 		input.UploadedBy,
 		metadataJSON,
 		now,
@@ -463,6 +469,12 @@ func validateCreateMediaAssetInput(
 		strings.TrimSpace(input.MimeType) == "" ||
 		input.FileSizeBytes <= 0 ||
 		strings.TrimSpace(input.FileHash) == "" {
+		return ErrInvalidRepositoryInput
+	}
+	status := NormalizeConstant(input.Status)
+	if status != "" &&
+		status != mediaAssetStatusAvailable &&
+		status != mediaAssetStatusQuarantined {
 		return ErrInvalidRepositoryInput
 	}
 

@@ -363,9 +363,9 @@ func (r *Repository) RetryOrFailAnalysisJob(
 	return job, nil
 }
 
-// CancelAnalysisJob cancels a job that has not begun
-// processing. Running work must be stopped cooperatively by
-// the worker before it can be cancelled.
+// CancelAnalysisJob atomically cancels queued, retrying or
+// processing work. Running workers observe the state and
+// cancel their engine request cooperatively.
 func (r *Repository) CancelAnalysisJob(
 	ctx context.Context,
 	organizationID uuid.UUID,
@@ -386,11 +386,14 @@ func (r *Repository) CancelAnalysisJob(
 		SET
 			status = $3,
 			progress_percentage = 100,
+			error_code = 'CANCELLED_BY_USER',
+			error_message = 'Media analysis job cancelled by user',
 			cancelled_at = CURRENT_TIMESTAMP,
+			completed_at = CURRENT_TIMESTAMP,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE organization_id = $1
 			AND id = $2
-			AND status IN ($4, $5)
+			AND status IN ($4, $5, $6)
 		RETURNING
 			id,
 			organization_id,
@@ -438,6 +441,7 @@ func (r *Repository) CancelAnalysisJob(
 			JobStatusCancelled,
 			JobStatusQueued,
 			JobStatusRetrying,
+			JobStatusProcessing,
 		),
 	)
 	if errors.Is(err, pgx.ErrNoRows) {

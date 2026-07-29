@@ -23,6 +23,8 @@ type Handler struct {
 	queryService    *QueryService
 	trustService    *TrustService
 	modelService    *ModelManagementService
+	reportService   *ForensicReportService
+	trainingService *TrainingService
 }
 
 func NewHandler(
@@ -31,6 +33,8 @@ func NewHandler(
 	queryService *QueryService,
 	trustService *TrustService,
 	modelService *ModelManagementService,
+	reportService *ForensicReportService,
+	trainingService *TrainingService,
 ) (*Handler, error) {
 	if assetService == nil ||
 		!assetService.isAvailable() ||
@@ -41,7 +45,10 @@ func NewHandler(
 		trustService == nil ||
 		!trustService.isAvailable() ||
 		modelService == nil ||
-		!modelService.isAvailable() {
+		!modelService.isAvailable() ||
+		reportService == nil ||
+		trainingService == nil ||
+		!trainingService.isAvailable() {
 		return nil, errors.New(
 			"deepfake forensics handler dependencies are unavailable",
 		)
@@ -53,6 +60,8 @@ func NewHandler(
 		queryService:    queryService,
 		trustService:    trustService,
 		modelService:    modelService,
+		reportService:   reportService,
+		trainingService: trainingService,
 	}, nil
 }
 
@@ -134,6 +143,20 @@ func (h *Handler) UploadMediaAsset(
 		request,
 	)
 	if err != nil {
+		if errors.Is(
+			err,
+			ErrMediaUploadQuarantined,
+		) &&
+			asset != nil {
+			response.Success(
+				c,
+				http.StatusAccepted,
+				"Media upload was isolated because its content did not match the declared file type",
+				asset,
+			)
+			return
+		}
+
 		handleMediaAPIError(
 			c,
 			err,
@@ -559,7 +582,8 @@ func (h *Handler) authenticatedIdentity(
 		h.analysisService == nil ||
 		h.queryService == nil ||
 		h.trustService == nil ||
-		h.modelService == nil {
+		h.modelService == nil ||
+		h.reportService == nil {
 		response.InternalServerError(
 			c,
 			"Deepfake forensics handler is unavailable",
@@ -903,6 +927,17 @@ func handleMediaAPIError(
 
 	case errors.Is(
 		err,
+		ErrMediaStorageIntegrity,
+	):
+		response.Error(
+			c,
+			http.StatusUnprocessableEntity,
+			"Media storage integrity verification failed",
+			nil,
+		)
+
+	case errors.Is(
+		err,
 		ErrMediaEngineUnavailable,
 	):
 		response.Error(
@@ -929,10 +964,14 @@ func handleMediaAPIError(
 
 	default:
 		_ = c.Error(err)
+		errPayload := interface{}(nil)
+		if err != nil {
+			errPayload = err.Error()
+		}
 		response.InternalServerError(
 			c,
 			defaultMessage,
-			nil,
+			errPayload,
 		)
 	}
 }

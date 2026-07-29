@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/url"
@@ -32,6 +33,15 @@ type DeepfakeForensicsConfig struct {
 
 	StoragePath        string
 	MaximumUploadBytes int64
+
+	StorageEncryptionEnabled bool
+	StorageEncryptionKey     string
+	QuarantineMalformed      bool
+
+	MaintenanceInterval    time.Duration
+	StaleProcessingTimeout time.Duration
+	TemporaryFileTTL       time.Duration
+	RetentionDays          int
 }
 
 func loadDeepfakeForensicsConfig() (
@@ -57,6 +67,30 @@ func loadDeepfakeForensicsConfig() (
 	analysisTimeout, err := loadConfigurationDuration(
 		"DEEPFAKE_FORENSICS_ANALYSIS_TIMEOUT",
 		10*time.Minute,
+	)
+	if err != nil {
+		return DeepfakeForensicsConfig{}, err
+	}
+
+	maintenanceInterval, err := loadConfigurationDuration(
+		"DEEPFAKE_FORENSICS_MAINTENANCE_INTERVAL",
+		15*time.Minute,
+	)
+	if err != nil {
+		return DeepfakeForensicsConfig{}, err
+	}
+
+	staleProcessingTimeout, err := loadConfigurationDuration(
+		"DEEPFAKE_FORENSICS_STALE_PROCESSING_TIMEOUT",
+		30*time.Minute,
+	)
+	if err != nil {
+		return DeepfakeForensicsConfig{}, err
+	}
+
+	temporaryFileTTL, err := loadConfigurationDuration(
+		"DEEPFAKE_FORENSICS_TEMPORARY_FILE_TTL",
+		time.Hour,
 	)
 	if err != nil {
 		return DeepfakeForensicsConfig{}, err
@@ -116,6 +150,25 @@ func loadDeepfakeForensicsConfig() (
 		MaximumUploadBytes: viper.GetInt64(
 			"DEEPFAKE_FORENSICS_MAXIMUM_UPLOAD_BYTES",
 		),
+
+		StorageEncryptionEnabled: viper.GetBool(
+			"DEEPFAKE_FORENSICS_STORAGE_ENCRYPTION_ENABLED",
+		),
+		StorageEncryptionKey: strings.TrimSpace(
+			viper.GetString(
+				"DEEPFAKE_FORENSICS_STORAGE_ENCRYPTION_KEY",
+			),
+		),
+		QuarantineMalformed: viper.GetBool(
+			"DEEPFAKE_FORENSICS_QUARANTINE_MALFORMED",
+		),
+
+		MaintenanceInterval:    maintenanceInterval,
+		StaleProcessingTimeout: staleProcessingTimeout,
+		TemporaryFileTTL:       temporaryFileTTL,
+		RetentionDays: viper.GetInt(
+			"DEEPFAKE_FORENSICS_RETENTION_DAYS",
+		),
 	}
 
 	if err = validateDeepfakeForensicsConfig(
@@ -169,6 +222,35 @@ func setDeepfakeForensicsDefaults() {
 	viper.SetDefault(
 		"DEEPFAKE_FORENSICS_MAXIMUM_UPLOAD_BYTES",
 		defaultDeepfakeForensicsMaximumUploadBytes,
+	)
+	viper.SetDefault(
+		"DEEPFAKE_FORENSICS_STORAGE_ENCRYPTION_ENABLED",
+		false,
+	)
+	viper.SetDefault(
+		"DEEPFAKE_FORENSICS_STORAGE_ENCRYPTION_KEY",
+		"",
+	)
+	viper.SetDefault(
+		"DEEPFAKE_FORENSICS_QUARANTINE_MALFORMED",
+		true,
+	)
+
+	viper.SetDefault(
+		"DEEPFAKE_FORENSICS_MAINTENANCE_INTERVAL",
+		"15m",
+	)
+	viper.SetDefault(
+		"DEEPFAKE_FORENSICS_STALE_PROCESSING_TIMEOUT",
+		"30m",
+	)
+	viper.SetDefault(
+		"DEEPFAKE_FORENSICS_TEMPORARY_FILE_TTL",
+		"1h",
+	)
+	viper.SetDefault(
+		"DEEPFAKE_FORENSICS_RETENTION_DAYS",
+		90,
 	)
 }
 
@@ -243,6 +325,43 @@ func validateDeepfakeForensicsConfig(
 	if cfg.MaximumUploadBytes <= 0 {
 		return errors.New(
 			"DEEPFAKE_FORENSICS_MAXIMUM_UPLOAD_BYTES must be greater than zero",
+		)
+	}
+
+	if cfg.StorageEncryptionEnabled {
+		key, decodeErr := base64.StdEncoding.DecodeString(
+			strings.TrimSpace(
+				cfg.StorageEncryptionKey,
+			),
+		)
+		if decodeErr != nil ||
+			len(key) != 32 {
+			return errors.New(
+				"DEEPFAKE_FORENSICS_STORAGE_ENCRYPTION_KEY must be a base64-encoded 32-byte key when storage encryption is enabled",
+			)
+		}
+	}
+
+	if cfg.MaintenanceInterval <= 0 {
+		return errors.New(
+			"DEEPFAKE_FORENSICS_MAINTENANCE_INTERVAL must be greater than zero",
+		)
+	}
+	if cfg.StaleProcessingTimeout <=
+		cfg.AnalysisTimeout {
+		return errors.New(
+			"DEEPFAKE_FORENSICS_STALE_PROCESSING_TIMEOUT must be greater than DEEPFAKE_FORENSICS_ANALYSIS_TIMEOUT",
+		)
+	}
+	if cfg.TemporaryFileTTL <= 0 {
+		return errors.New(
+			"DEEPFAKE_FORENSICS_TEMPORARY_FILE_TTL must be greater than zero",
+		)
+	}
+	if cfg.RetentionDays < 0 ||
+		cfg.RetentionDays > 3650 {
+		return errors.New(
+			"DEEPFAKE_FORENSICS_RETENTION_DAYS must be between 0 and 3650",
 		)
 	}
 

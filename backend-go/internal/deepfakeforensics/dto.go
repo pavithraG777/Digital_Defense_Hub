@@ -38,6 +38,7 @@ type CreateMediaAssetInput struct {
 	EncryptionAlgorithm *string
 
 	SourceType string
+	Status     string
 	UploadedBy uuid.UUID
 
 	Metadata map[string]any
@@ -52,6 +53,23 @@ type StartMediaAnalysisRequest struct {
 	ExecutionDevice string `json:"execution_device"`
 
 	ForceReanalysis bool `json:"force_reanalysis"`
+}
+
+// MediaAssetQuarantineRequest records the security reason
+// for isolating or releasing one organization asset.
+type MediaAssetQuarantineRequest struct {
+	Reason string `json:"reason"`
+}
+
+// MediaAssetSecurityEventPage returns an organization-safe
+// slice of the immutable media security audit trail.
+type MediaAssetSecurityEventPage struct {
+	Items []MediaAssetSecurityEvent `json:"items"`
+
+	Total      int64 `json:"total"`
+	Page       int   `json:"page"`
+	PageSize   int   `json:"page_size"`
+	TotalPages int   `json:"total_pages"`
 }
 
 // AnalyzeEvidenceRequest imports an existing evidence

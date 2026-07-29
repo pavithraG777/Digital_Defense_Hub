@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -39,6 +40,20 @@ type AnalysisWorkerStats struct {
 	Processed uint64 `json:"processed"`
 	Retried   uint64 `json:"retried"`
 	Failed    uint64 `json:"failed"`
+	Cancelled uint64 `json:"cancelled"`
+
+	StaleJobsRecovered    uint64 `json:"stale_jobs_recovered"`
+	TemporaryFilesRemoved uint64 `json:"temporary_files_removed"`
+	AssetsArchived        uint64 `json:"assets_archived"`
+}
+
+// AnalysisMaintenancePolicy controls non-destructive queue
+// recovery, plaintext cleanup and retention archiving.
+type AnalysisMaintenancePolicy struct {
+	Interval               time.Duration
+	StaleProcessingTimeout time.Duration
+	TemporaryFileTTL       time.Duration
+	RetentionDays          int
 }
 
 // AnalysisWorker polls PostgreSQL for organization-scoped
@@ -47,6 +62,9 @@ type AnalysisWorker struct {
 	repository   *Repository
 	engineClient *EngineClient
 	logger       *zap.Logger
+	fileManager  *AssetFileManager
+
+	maintenancePolicy AnalysisMaintenancePolicy
 
 	trustEscalationPublisher MediaTrustEscalationPublisher
 
@@ -65,6 +83,11 @@ type AnalysisWorker struct {
 	processedCount atomic.Uint64
 	retriedCount   atomic.Uint64
 	failedCount    atomic.Uint64
+	cancelledCount atomic.Uint64
+
+	staleJobsRecoveredCount    atomic.Uint64
+	temporaryFilesRemovedCount atomic.Uint64
+	assetsArchivedCount        atomic.Uint64
 }
 
 // NewAnalysisWorker creates the durable database-backed
@@ -139,6 +162,38 @@ func NewAnalysisWorker(
 	}, nil
 }
 
+// SetStorageSecurity connects encrypted asset staging and
+// the periodic operations policy before the worker starts.
+func (w *AnalysisWorker) SetStorageSecurity(
+	fileManager *AssetFileManager,
+	policy AnalysisMaintenancePolicy,
+) error {
+	if w == nil ||
+		fileManager == nil {
+		return ErrAnalysisWorkerUnavailable
+	}
+	if policy.Interval <= 0 ||
+		policy.StaleProcessingTimeout <= 0 ||
+		policy.TemporaryFileTTL <= 0 ||
+		policy.RetentionDays < 0 {
+		return errors.New(
+			"invalid media analysis maintenance policy",
+		)
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.started || w.stopped {
+		return errors.New(
+			"media storage security must be configured before worker start",
+		)
+	}
+
+	w.fileManager = fileManager
+	w.maintenancePolicy = policy
+	return nil
+}
+
 // Start launches the configured database polling workers.
 func (w *AnalysisWorker) Start(
 	parent context.Context,
@@ -169,6 +224,35 @@ func (w *AnalysisWorker) Start(
 	w.cancel = cancel
 	w.started = true
 
+	maintenanceEnabled := w.fileManager != nil
+	if maintenanceEnabled {
+		w.logger.Info(
+			"Deepfake forensics media maintenance starting",
+			zap.Duration(
+				"maintenance_interval",
+				w.maintenancePolicy.Interval,
+			),
+			zap.Duration(
+				"stale_processing_timeout",
+				w.maintenancePolicy.StaleProcessingTimeout,
+			),
+			zap.Duration(
+				"temporary_file_ttl",
+				w.maintenancePolicy.TemporaryFileTTL,
+			),
+			zap.Int(
+				"retention_days",
+				w.maintenancePolicy.RetentionDays,
+			),
+		)
+
+		// Run the first cycle before accepting new work. This
+		// deterministically releases jobs abandoned by an old
+		// process and prevents active-job checks from delaying
+		// retention archiving until the next interval.
+		w.executeMaintenance(workerContext)
+	}
+
 	for workerIndex := 1; workerIndex <= w.workerCount; workerIndex++ {
 		w.wait.Add(1)
 
@@ -176,6 +260,11 @@ func (w *AnalysisWorker) Start(
 			workerContext,
 			workerIndex,
 		)
+	}
+
+	if maintenanceEnabled {
+		w.wait.Add(1)
+		go w.runMaintenance(workerContext)
 	}
 
 	w.logger.Info(
@@ -195,6 +284,10 @@ func (w *AnalysisWorker) Start(
 		zap.String(
 			"processing_node",
 			w.processingNode,
+		),
+		zap.Bool(
+			"maintenance_enabled",
+			maintenanceEnabled,
 		),
 	)
 
@@ -256,6 +349,10 @@ func (w *AnalysisWorker) Stop(
 				"failed",
 				stats.Failed,
 			),
+			zap.Uint64(
+				"cancelled",
+				stats.Cancelled,
+			),
 		)
 
 		return nil
@@ -279,6 +376,11 @@ func (w *AnalysisWorker) Stats() AnalysisWorkerStats {
 		Processed: w.processedCount.Load(),
 		Retried:   w.retriedCount.Load(),
 		Failed:    w.failedCount.Load(),
+		Cancelled: w.cancelledCount.Load(),
+
+		StaleJobsRecovered:    w.staleJobsRecoveredCount.Load(),
+		TemporaryFilesRemoved: w.temporaryFilesRemovedCount.Load(),
+		AssetsArchived:        w.assetsArchivedCount.Load(),
 	}
 }
 
@@ -384,6 +486,75 @@ func (w *AnalysisWorker) processClaimedJob(
 		)
 		return
 	}
+
+	if w.fileManager != nil {
+		prepared, prepareErr :=
+			w.fileManager.PrepareAnalysisSource(
+				processingContext,
+				source.Asset,
+				job.ID,
+			)
+		if prepareErr != nil {
+			if errors.Is(
+				prepareErr,
+				ErrMediaStorageIntegrity,
+			) {
+				quarantineContext,
+					cancelQuarantine :=
+					context.WithTimeout(
+						context.Background(),
+						analysisFailureTimeout,
+					)
+				_ = w.repository.
+					QuarantineMediaAssetForIntegrityFailure(
+						quarantineContext,
+						source.Asset.OrganizationID,
+						source.Asset.ID,
+						safeAnalysisErrorMessage(
+							prepareErr,
+						),
+					)
+				cancelQuarantine()
+			}
+			w.handleJobFailure(
+				workerIndex,
+				job,
+				nil,
+				analysisFailureCode(
+					prepareErr,
+				),
+				prepareErr,
+				time.Since(startedAt),
+			)
+			return
+		}
+		source.Asset.StoragePath =
+			prepared.Path
+		defer func() {
+			if prepared.Cleanup != nil {
+				if cleanupErr :=
+					prepared.Cleanup(); cleanupErr != nil {
+					w.logger.Warn(
+						"Unable to remove temporary plaintext media",
+						zap.String(
+							"analysis_job_id",
+							job.ID.String(),
+						),
+						zap.Error(cleanupErr),
+					)
+				}
+			}
+		}()
+	}
+
+	stopCancellationWatch := make(chan struct{})
+	go w.watchJobCancellation(
+		processingContext,
+		job.ID,
+		cancel,
+		stopCancellationWatch,
+	)
+	defer close(stopCancellationWatch)
 
 	if err = w.repository.UpdateAnalysisJobProgress(
 		processingContext,
@@ -541,6 +712,28 @@ func (w *AnalysisWorker) handleJobFailure(
 	processingError error,
 	elapsed time.Duration,
 ) {
+	cancelled, cancellationErr :=
+		w.repository.IsAnalysisJobCancelled(
+			context.Background(),
+			job.ID,
+		)
+	if cancellationErr == nil &&
+		cancelled {
+		w.cancelledCount.Add(1)
+		w.logger.Info(
+			"Media analysis job cancellation completed",
+			zap.Int(
+				"worker_index",
+				workerIndex,
+			),
+			zap.String(
+				"analysis_job_id",
+				job.ID.String(),
+			),
+		)
+		return
+	}
+
 	failureContext, cancel :=
 		context.WithTimeout(
 			context.Background(),
@@ -701,8 +894,51 @@ func analysisFailureCode(
 	):
 		return "MEDIA_ENGINE_RESPONSE_INVALID"
 
+	case errors.Is(
+		err,
+		ErrMediaStorageIntegrity,
+	):
+		return "MEDIA_STORAGE_INTEGRITY_FAILED"
+
 	default:
 		return "MEDIA_ANALYSIS_FAILED"
+	}
+}
+
+func (w *AnalysisWorker) watchJobCancellation(
+	ctx context.Context,
+	jobID uuid.UUID,
+	cancel context.CancelFunc,
+	stop <-chan struct{},
+) {
+	interval := 500 * time.Millisecond
+	if w.pollInterval > 0 &&
+		w.pollInterval < interval {
+		interval = w.pollInterval
+	}
+
+	timer := time.NewTicker(interval)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+
+		case <-stop:
+			return
+
+		case <-timer.C:
+			cancelled, err :=
+				w.repository.IsAnalysisJobCancelled(
+					ctx,
+					jobID,
+				)
+			if err == nil && cancelled {
+				cancel()
+				return
+			}
+		}
 	}
 }
 

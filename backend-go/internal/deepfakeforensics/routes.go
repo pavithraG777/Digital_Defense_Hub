@@ -72,6 +72,42 @@ func RegisterRoutes(
 		handler.StartMediaAnalysis,
 	)
 
+	assetGroup.POST(
+		"/:media_asset_id/forensic-reports",
+		middleware.RequirePermission(
+			databasePool,
+			permissionManageDeepfakeForensics,
+		),
+		handler.CreateMediaForensicReport,
+	)
+
+	assetGroup.POST(
+		"/:media_asset_id/quarantine",
+		middleware.RequirePermission(
+			databasePool,
+			permissionManageDeepfakeForensics,
+		),
+		handler.QuarantineMediaAsset,
+	)
+
+	assetGroup.POST(
+		"/:media_asset_id/release",
+		middleware.RequirePermission(
+			databasePool,
+			permissionManageDeepfakeForensics,
+		),
+		handler.ReleaseMediaAsset,
+	)
+
+	assetGroup.GET(
+		"/:media_asset_id/security-events",
+		middleware.RequirePermission(
+			databasePool,
+			permissionViewDeepfakeForensics,
+		),
+		handler.ListMediaAssetSecurityEvents,
+	)
+
 	assetGroup.GET(
 		"/:media_asset_id/trust-assessment",
 		middleware.RequirePermission(
@@ -130,6 +166,20 @@ func RegisterRoutes(
 		handler.CancelAnalysisJob,
 	)
 
+	jobGroup.POST(
+		"/:analysis_job_id/retry",
+		middleware.RequirePermission(
+			databasePool,
+			permissionManageDeepfakeForensics,
+		),
+		handler.RetryAnalysisJob,
+	)
+
+	reportGroup := forensicsGroup.Group("/forensic-reports")
+	reportGroup.GET("/:report_id", middleware.RequirePermission(databasePool, permissionViewDeepfakeForensics), handler.GetMediaForensicReport)
+	reportGroup.POST("/:report_id/approve", middleware.RequirePermission(databasePool, permissionManageDeepfakeForensics), handler.ApproveMediaForensicReport)
+	reportGroup.GET("/:report_id/download", middleware.RequirePermission(databasePool, permissionViewDeepfakeForensics), handler.DownloadMediaForensicReport)
+
 	modelGroup := forensicsGroup.Group(
 		"/models",
 	)
@@ -153,6 +203,24 @@ func RegisterRoutes(
 	)
 
 	modelGroup.POST(
+		"",
+		middleware.RequirePermission(
+			databasePool,
+			permissionManageDeepfakeForensics,
+		),
+		handler.UploadManagedAIModel,
+	)
+
+	modelGroup.POST(
+		"/:model_id/versions",
+		middleware.RequirePermission(
+			databasePool,
+			permissionManageDeepfakeForensics,
+		),
+		handler.UploadManagedAIModelVersion,
+	)
+
+	modelGroup.POST(
 		"/:model_id/versions/:model_version_id/activate",
 		middleware.RequirePermission(
 			databasePool,
@@ -160,6 +228,32 @@ func RegisterRoutes(
 		),
 		handler.ActivateManagedAIModelVersion,
 	)
+
+	modelGroup.POST(
+		"/:model_id/rollback",
+		middleware.RequirePermission(
+			databasePool,
+			permissionManageDeepfakeForensics,
+		),
+		handler.RollbackManagedAIModelVersion,
+	)
+
+	modelGroup.POST(
+		"/:model_id/assignments",
+		middleware.RequirePermission(
+			databasePool,
+			permissionManageDeepfakeForensics,
+		),
+		handler.AssignManagedAIModelVersion,
+	)
+
+	trainingGroup := forensicsGroup.Group("/training")
+	trainingGroup.POST("/datasets", middleware.RequirePermission(databasePool, permissionManageDeepfakeForensics), handler.RegisterTrainingDataset)
+	trainingGroup.GET("/datasets", middleware.RequirePermission(databasePool, permissionViewDeepfakeForensics), handler.ListTrainingDatasets)
+	trainingGroup.POST("/datasets/:dataset_id/versions", middleware.RequirePermission(databasePool, permissionManageDeepfakeForensics), handler.RegisterTrainingDatasetVersion)
+	trainingGroup.POST("/datasets/:dataset_id/versions/:dataset_version_id/validate", middleware.RequirePermission(databasePool, permissionManageDeepfakeForensics), handler.ValidateTrainingDatasetVersion)
+	trainingGroup.POST("/jobs", middleware.RequirePermission(databasePool, permissionManageDeepfakeForensics), handler.CreateTrainingJob)
+	trainingGroup.GET("/jobs", middleware.RequirePermission(databasePool, permissionViewDeepfakeForensics), handler.ListTrainingJobs)
 }
 
 func validateRouteDependencies(
@@ -178,7 +272,8 @@ func validateRouteDependencies(
 		handler.analysisService == nil ||
 		handler.queryService == nil ||
 		handler.trustService == nil ||
-		handler.modelService == nil {
+		handler.modelService == nil ||
+		handler.trainingService == nil {
 		panic(
 			"deepfake forensics handler is required",
 		)
