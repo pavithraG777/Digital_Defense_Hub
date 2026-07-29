@@ -167,3 +167,23 @@ def test_invalid_service_token() -> None:
     )
 
     assert response.status_code == 401
+
+
+def test_image_training_rejects_dataset_outside_mount() -> None:
+    request_id = str(uuid4())
+    response = client.post(
+        "/v1/model-training/image-classification",
+        json={
+            "request_id": request_id,
+            "training_job_id": str(uuid4()),
+            "organization_id": str(uuid4()),
+            "dataset_version_id": str(uuid4()),
+            "dataset_path": "/outside/dataset",
+            "model_code": "DFI001",
+        },
+        headers=authentication_headers(request_id),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is False
+    assert response.json()["error_code"] == "INVALID_TRAINING_DATASET"
