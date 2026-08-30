@@ -19,6 +19,7 @@ MediaType = Literal[
 
 AnalysisJobType = Literal[
     "DEEPFAKE_IMAGE_DETECTION",
+    "AI_GENERATED_IMAGE_DETECTION",
     "DEEPFAKE_VIDEO_DETECTION",
     "DEEPFAKE_AUDIO_DETECTION",
     "IMAGE_FORENSICS",
@@ -185,6 +186,7 @@ class MediaAnalysisRequest(StrictSchema):
         ] = {
             "IMAGE": {
                 "DEEPFAKE_IMAGE_DETECTION",
+                "AI_GENERATED_IMAGE_DETECTION",
                 "IMAGE_FORENSICS",
                 "OCR_EXTRACTION",
             },

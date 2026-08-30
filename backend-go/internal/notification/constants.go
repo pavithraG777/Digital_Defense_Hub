@@ -7,6 +7,13 @@ const (
 	TypeIncidentAssigned      = "INCIDENT_ASSIGNED"
 	TypeIncidentStatusChanged = "INCIDENT_STATUS_CHANGED"
 	TypeEvidenceMismatch      = "EVIDENCE_MISMATCH"
+	TypeHoneytokenAlert       = "HONEYTOKEN_ALERT"
+	TypeCanaryFileAlert       = "CANARY_FILE_ALERT"
+	TypeMediaAnalysisComplete = "MEDIA_ANALYSIS_COMPLETED"
+	TypeEvidenceVerified      = "EVIDENCE_VERIFIED"
+	TypeCaseAssigned          = "CASE_ASSIGNED"
+	TypeReportApproval        = "REPORT_APPROVAL"
+	TypeContainmentAction     = "CONTAINMENT_ACTION"
 	TypeSystemAlert           = "SYSTEM_ALERT"
 	TypeCustom                = "CUSTOM"
 )

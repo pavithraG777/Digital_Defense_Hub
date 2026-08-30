@@ -11,21 +11,34 @@ const (
 
 const (
 	AnalysisModeDeepfake  = "DEEPFAKE"
+	AnalysisModeSynthetic = "SYNTHETIC"
 	AnalysisModeForensics = "FORENSICS"
 	AnalysisModeCombined  = "COMBINED"
 	AnalysisModeOCR       = "OCR"
 )
 
 const (
-	JobTypeDeepfakeImage = "DEEPFAKE_IMAGE_DETECTION"
-	JobTypeDeepfakeVideo = "DEEPFAKE_VIDEO_DETECTION"
-	JobTypeDeepfakeAudio = "DEEPFAKE_AUDIO_DETECTION"
+	AnalysisModeCrossModal = "CROSS_MODAL"
+)
 
-	JobTypeImageForensics = "IMAGE_FORENSICS"
-	JobTypeVideoForensics = "VIDEO_FORENSICS"
-	JobTypeAudioForensics = "AUDIO_FORENSICS"
+const (
+	JobTypeDeepfakeImage  = "DEEPFAKE_IMAGE_DETECTION"
+	JobTypeSyntheticImage = "AI_GENERATED_IMAGE_DETECTION"
+	JobTypeDeepfakeVideo  = "DEEPFAKE_VIDEO_DETECTION"
+	JobTypeDeepfakeAudio  = "DEEPFAKE_AUDIO_DETECTION"
+
+	JobTypeImageForensics    = "IMAGE_FORENSICS"
+	JobTypeVideoForensics    = "VIDEO_FORENSICS"
+	JobTypeAudioForensics    = "AUDIO_FORENSICS"
+	JobTypeDocumentForensics = "DOCUMENT_FORENSICS"
 
 	JobTypeOCRExtraction = "OCR_EXTRACTION"
+)
+
+const (
+	JobTypeAudioVisualConsistency = "AUDIO_VISUAL_CONSISTENCY"
+	JobTypeLipSyncConsistency     = "LIP_SYNC_CONSISTENCY"
+	JobTypeMetadataIntegrity      = "METADATA_INTEGRITY"
 )
 
 const (
@@ -103,9 +116,11 @@ func IsSupportedMediaType(value string) bool {
 func IsSupportedAnalysisMode(value string) bool {
 	switch NormalizeConstant(value) {
 	case AnalysisModeDeepfake,
+		AnalysisModeSynthetic,
 		AnalysisModeForensics,
 		AnalysisModeCombined,
-		AnalysisModeOCR:
+		AnalysisModeOCR,
+		AnalysisModeCrossModal:
 		return true
 
 	default:
@@ -138,11 +153,24 @@ func IsDeepfakeJobType(value string) bool {
 	}
 }
 
+func IsSyntheticJobType(value string) bool {
+	return NormalizeConstant(value) == JobTypeSyntheticImage
+}
+
+// IsDeepfakeAssessmentJobType identifies jobs that use the shared
+// deepfake_assessment response and persistence schema. The synthetic image
+// detector is operationally separate from the face-manipulation detector, but
+// both return the same binary authenticity assessment contract.
+func IsDeepfakeAssessmentJobType(value string) bool {
+	return IsDeepfakeJobType(value) || IsSyntheticJobType(value)
+}
+
 func IsForensicsJobType(value string) bool {
 	switch NormalizeConstant(value) {
 	case JobTypeImageForensics,
 		JobTypeVideoForensics,
-		JobTypeAudioForensics:
+		JobTypeAudioForensics,
+		JobTypeDocumentForensics:
 		return true
 
 	default:
@@ -152,7 +180,11 @@ func IsForensicsJobType(value string) bool {
 
 func IsSupportedJobType(value string) bool {
 	return IsDeepfakeJobType(value) ||
+		IsSyntheticJobType(value) ||
 		IsForensicsJobType(value) ||
-		NormalizeConstant(value) ==
-			JobTypeOCRExtraction
+		NormalizeConstant(value) == JobTypeOCRExtraction ||
+		NormalizeConstant(value) == JobTypeAudioVisualConsistency ||
+		NormalizeConstant(value) == JobTypeLipSyncConsistency ||
+		NormalizeConstant(value) == JobTypeMetadataIntegrity
+
 }

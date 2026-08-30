@@ -42,6 +42,10 @@ type DeepfakeForensicsConfig struct {
 	StaleProcessingTimeout time.Duration
 	TemporaryFileTTL       time.Duration
 	RetentionDays          int
+
+	TrainingArtifactEngineRoot  string
+	TrainingArtifactBackendRoot string
+	TrainingTimeout             time.Duration
 }
 
 func loadDeepfakeForensicsConfig() (
@@ -91,6 +95,14 @@ func loadDeepfakeForensicsConfig() (
 	temporaryFileTTL, err := loadConfigurationDuration(
 		"DEEPFAKE_FORENSICS_TEMPORARY_FILE_TTL",
 		time.Hour,
+	)
+	if err != nil {
+		return DeepfakeForensicsConfig{}, err
+	}
+
+	trainingTimeout, err := loadConfigurationDuration(
+		"ML_TRAINING_TIMEOUT",
+		12*time.Hour,
 	)
 	if err != nil {
 		return DeepfakeForensicsConfig{}, err
@@ -169,6 +181,9 @@ func loadDeepfakeForensicsConfig() (
 		RetentionDays: viper.GetInt(
 			"DEEPFAKE_FORENSICS_RETENTION_DAYS",
 		),
+		TrainingArtifactEngineRoot:  strings.TrimSpace(viper.GetString("ML_TRAINING_ARTIFACT_ENGINE_ROOT")),
+		TrainingArtifactBackendRoot: strings.TrimSpace(viper.GetString("ML_TRAINING_ARTIFACT_ROOT")),
+		TrainingTimeout:             trainingTimeout,
 	}
 
 	if err = validateDeepfakeForensicsConfig(
@@ -252,6 +267,9 @@ func setDeepfakeForensicsDefaults() {
 		"DEEPFAKE_FORENSICS_RETENTION_DAYS",
 		90,
 	)
+	viper.SetDefault("ML_TRAINING_ARTIFACT_ENGINE_ROOT", "/models/trained")
+	viper.SetDefault("ML_TRAINING_ARTIFACT_ROOT", "./storage/trained-models")
+	viper.SetDefault("ML_TRAINING_TIMEOUT", "12h")
 }
 
 func validateDeepfakeForensicsConfig(
@@ -363,6 +381,12 @@ func validateDeepfakeForensicsConfig(
 		return errors.New(
 			"DEEPFAKE_FORENSICS_RETENTION_DAYS must be between 0 and 3650",
 		)
+	}
+	if strings.TrimSpace(cfg.TrainingArtifactEngineRoot) == "" || strings.TrimSpace(cfg.TrainingArtifactBackendRoot) == "" {
+		return errors.New("ML_TRAINING_ARTIFACT_ENGINE_ROOT and ML_TRAINING_ARTIFACT_ROOT are required")
+	}
+	if cfg.TrainingTimeout <= 0 {
+		return errors.New("ML_TRAINING_TIMEOUT must be greater than zero")
 	}
 
 	return nil

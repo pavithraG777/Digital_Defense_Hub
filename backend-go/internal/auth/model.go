@@ -7,27 +7,41 @@ import (
 )
 
 type User struct {
-	ID                  uuid.UUID  `json:"id"`
-	OrganizationID      uuid.UUID  `json:"organization_id"`
-	Username            string     `json:"username"`
-	OfficialEmail       string     `json:"official_email"`
-	PasswordHash        string     `json:"-"`
-	UserType            string     `json:"user_type"`
-	AccountStatus       string     `json:"account_status"`
-	EmailVerified       bool       `json:"email_verified"`
-	PhoneVerified       bool       `json:"phone_verified"`
-	MFAEnabled          bool       `json:"mfa_enabled"`
-	MustChangePassword  bool       `json:"must_change_password"`
-	FailedLoginAttempts int        `json:"failed_login_attempts"`
-	LockedUntil         *time.Time `json:"locked_until,omitempty"`
-	PasswordChangedAt   *time.Time `json:"password_changed_at,omitempty"`
-	LastLoginAt         *time.Time `json:"last_login_at,omitempty"`
-	LastLogoutAt        *time.Time `json:"last_logout_at,omitempty"`
-	PreferredLanguage   string     `json:"preferred_language"`
-	Timezone            string     `json:"timezone"`
-	CreatedAt           time.Time  `json:"created_at"`
-	UpdatedAt           time.Time  `json:"updated_at"`
-	DeletedAt           *time.Time `json:"deleted_at,omitempty"`
+	ID                    uuid.UUID  `json:"id"`
+	OrganizationID        uuid.UUID  `json:"organization_id"`
+	Username              string     `json:"username"`
+	OfficialEmail         string     `json:"official_email"`
+	PasswordHash          string     `json:"-"`
+	UserType              string     `json:"user_type"`
+	AccountStatus         string     `json:"account_status"`
+	EmailVerified         bool       `json:"email_verified"`
+	PhoneVerified         bool       `json:"phone_verified"`
+	MFAEnabled            bool       `json:"mfa_enabled"`
+	MFASecretEncrypted    []byte     `json:"-"`
+	MFARecoveryCodeHashes []string   `json:"-"`
+	MustChangePassword    bool       `json:"must_change_password"`
+	FailedLoginAttempts   int        `json:"failed_login_attempts"`
+	LockedUntil           *time.Time `json:"locked_until,omitempty"`
+	PasswordChangedAt     *time.Time `json:"password_changed_at,omitempty"`
+	LastLoginAt           *time.Time `json:"last_login_at,omitempty"`
+	LastLogoutAt          *time.Time `json:"last_logout_at,omitempty"`
+	PreferredLanguage     string     `json:"preferred_language"`
+	Timezone              string     `json:"timezone"`
+	CreatedAt             time.Time  `json:"created_at"`
+	UpdatedAt             time.Time  `json:"updated_at"`
+	DeletedAt             *time.Time `json:"deleted_at,omitempty"`
+}
+
+type MFAChallenge struct {
+	ID              uuid.UUID
+	UserID          uuid.UUID
+	OrganizationID  uuid.UUID
+	EmailCodeHash   string
+	SMSCodeHash     string
+	Status          string
+	Attempts        int
+	MaximumAttempts int
+	ExpiresAt       time.Time
 }
 
 type UserProfile struct {

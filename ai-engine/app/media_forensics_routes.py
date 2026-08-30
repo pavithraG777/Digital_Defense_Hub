@@ -57,6 +57,7 @@ async def media_forensics_health() -> dict[str, object]:
         "service": "DDH Multi-Modal Media Forensics",
         "supported_job_types": [
             "DEEPFAKE_IMAGE_DETECTION",
+            "AI_GENERATED_IMAGE_DETECTION",
             "DEEPFAKE_VIDEO_DETECTION",
             "DEEPFAKE_AUDIO_DETECTION",
             "IMAGE_FORENSICS",

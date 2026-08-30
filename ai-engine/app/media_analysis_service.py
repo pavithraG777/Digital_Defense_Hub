@@ -6,6 +6,7 @@ from time import perf_counter
 from typing import Any
 
 from app.config import get_settings
+from app.advanced_forensics import enrich_advanced_forensics
 from app.media_audio_analyzer import AudioAnalyzer
 from app.media_forensics_runtime import (
     MediaRuntimeError,
@@ -25,6 +26,7 @@ class MediaAnalysisService:
 
     _JOB_MEDIA_TYPES: dict[str, set[str]] = {
         "DEEPFAKE_IMAGE_DETECTION": {"IMAGE"},
+        "AI_GENERATED_IMAGE_DETECTION": {"IMAGE"},
         "DEEPFAKE_VIDEO_DETECTION": {"VIDEO"},
         "DEEPFAKE_AUDIO_DETECTION": {"AUDIO"},
         "IMAGE_FORENSICS": {"IMAGE"},
@@ -145,6 +147,16 @@ class MediaAnalysisService:
                 output_directory=output_directory,
             )
 
+            warnings.extend(
+                enrich_advanced_forensics(
+                    file_hash=request.file_hash,
+                    media_type=request.media_type,
+                    deepfake=deepfake_assessment,
+                    forensics=forensics_assessment,
+                    ocr=ocr_assessment,
+                )
+            )
+
             return MediaAnalysisResponse(
                 request_id=request.request_id,
                 analysis_job_id=request.analysis_job_id,
@@ -212,7 +224,10 @@ class MediaAnalysisService:
             else None
         )
 
-        if request.job_type == "DEEPFAKE_IMAGE_DETECTION":
+        if request.job_type in {
+            "DEEPFAKE_IMAGE_DETECTION",
+            "AI_GENERATED_IMAGE_DETECTION",
+        }:
             assessment, runtime, warnings = (
                 self._image_analyzer.analyze_deepfake(
                     source_path,

@@ -15,10 +15,18 @@ type Config struct {
 	Storage           StorageConfig
 	Log               LogConfig
 	AIRisk            AIRiskConfig
+	DFIRML            DFIRMLConfig
 	PreEncryption     PreEncryptionConfig
 	AdaptiveDeception AdaptiveDeceptionConfig
 	DeepfakeForensics DeepfakeForensicsConfig
 	Notification      NotificationConfig
+	MFA               MFAConfig
+}
+
+type MFAConfig struct {
+	LocalDeliveryEnabled bool
+	LocalOutboxPath      string
+	MasterKey            string
 }
 
 type AppConfig struct {
@@ -63,6 +71,15 @@ type AIRiskConfig struct {
 
 	Timeout         time.Duration
 	DefaultValidity time.Duration
+}
+
+type DFIRMLConfig struct {
+	Enabled bool
+
+	EngineURL    string
+	ServiceToken string
+
+	Timeout time.Duration
 }
 
 type PreEncryptionConfig struct {
@@ -131,6 +148,11 @@ type NotificationSMSConfig struct {
 	DefaultCountryCode string
 	AllowInsecureHTTP  bool
 	Timeout            time.Duration
+
+	AWSRegion   string
+	AWSProfile  string
+	AWSSenderID string
+	AWSSMSType  string
 }
 
 type NotificationWebhookConfig struct {
@@ -145,6 +167,188 @@ type NotificationWebhookConfig struct {
 
 	AllowInsecureHTTP bool
 	Timeout           time.Duration
+}
+
+func setConfigurationDefaults() {
+	setDeepfakeForensicsDefaults()
+
+	viper.SetDefault(
+		"AI_RISK_ENABLED",
+		true,
+	)
+	viper.SetDefault(
+		"AI_RISK_ENGINE_URL",
+		"http://127.0.0.1:8091",
+	)
+	viper.SetDefault(
+		"AI_RISK_ENGINE_TIMEOUT",
+		"15s",
+	)
+	viper.SetDefault(
+		"AI_RISK_DEFAULT_VALIDITY",
+		"24h",
+	)
+
+	viper.SetDefault(
+		"PRE_ENCRYPTION_ENABLED",
+		true,
+	)
+	viper.SetDefault(
+		"PRE_ENCRYPTION_WINDOW_DURATION",
+		"1m",
+	)
+	viper.SetDefault(
+		"PRE_ENCRYPTION_MINIMUM_SCORE",
+		25.0,
+	)
+	viper.SetDefault(
+		"PRE_ENCRYPTION_WORKER_COUNT",
+		2,
+	)
+	viper.SetDefault(
+		"PRE_ENCRYPTION_QUEUE_CAPACITY",
+		256,
+	)
+	viper.SetDefault(
+		"PRE_ENCRYPTION_ANALYSIS_TIMEOUT",
+		"30s",
+	)
+	viper.SetDefault(
+		"CANARY_STORAGE_PATH",
+		"./storage/canary",
+	)
+	viper.SetDefault(
+		"CANARY_DEPLOYMENT_ROOT",
+		"./storage/canary-deployments",
+	)
+	viper.SetDefault(
+		"NOTIFICATION_WORKER_ENABLED",
+		true,
+	)
+	viper.SetDefault(
+		"NOTIFICATION_WORKER_COUNT",
+		4,
+	)
+	viper.SetDefault(
+		"NOTIFICATION_BATCH_SIZE",
+		20,
+	)
+	viper.SetDefault(
+		"NOTIFICATION_POLL_INTERVAL",
+		"2s",
+	)
+	viper.SetDefault(
+		"NOTIFICATION_DELIVERY_TIMEOUT",
+		"30s",
+	)
+	viper.SetDefault(
+		"NOTIFICATION_MAINTENANCE_INTERVAL",
+		"1m",
+	)
+	viper.SetDefault(
+		"NOTIFICATION_STALE_PROCESSING_PERIOD",
+		"5m",
+	)
+	viper.SetDefault(
+		"NOTIFICATION_LOCAL_DESKTOP_ENABLED",
+		true,
+	)
+	viper.SetDefault(
+		"NOTIFICATION_LOCAL_DESKTOP_OUTBOX_PATH",
+		"./storage/notification-outbox/local-desktop",
+	)
+	viper.SetDefault(
+		"NOTIFICATION_EMAIL_ENABLED",
+		false,
+	)
+	viper.SetDefault(
+		"NOTIFICATION_EMAIL_PROVIDER_NAME",
+		"DDH_SMTP",
+	)
+	viper.SetDefault(
+		"NOTIFICATION_EMAIL_PORT",
+		587,
+	)
+	viper.SetDefault(
+		"NOTIFICATION_EMAIL_FROM_NAME",
+		"Digital Defense Hub",
+	)
+	viper.SetDefault(
+		"NOTIFICATION_EMAIL_SUBJECT_PREFIX",
+		"[DDH]",
+	)
+	viper.SetDefault(
+		"NOTIFICATION_EMAIL_USE_IMPLICIT_TLS",
+		false,
+	)
+	viper.SetDefault(
+		"NOTIFICATION_EMAIL_REQUIRE_STARTTLS",
+		true,
+	)
+	viper.SetDefault(
+		"NOTIFICATION_EMAIL_TLS_INSECURE_SKIP_VERIFY",
+		false,
+	)
+	viper.SetDefault(
+		"NOTIFICATION_EMAIL_TIMEOUT",
+		"30s",
+	)
+	viper.SetDefault(
+		"NOTIFICATION_SMS_ENABLED",
+		false,
+	)
+	viper.SetDefault(
+		"NOTIFICATION_SMS_PROVIDER_NAME",
+		"DDH_HTTP_SMS",
+	)
+	viper.SetDefault(
+		"NOTIFICATION_SMS_API_KEY_HEADER",
+		"Authorization",
+	)
+	viper.SetDefault(
+		"NOTIFICATION_SMS_API_KEY_PREFIX",
+		"Bearer",
+	)
+	viper.SetDefault(
+		"NOTIFICATION_SMS_DEFAULT_COUNTRY_CODE",
+		"+91",
+	)
+	viper.SetDefault(
+		"NOTIFICATION_SMS_ALLOW_INSECURE_HTTP",
+		false,
+	)
+	viper.SetDefault(
+		"NOTIFICATION_SMS_TIMEOUT",
+		"20s",
+	)
+	viper.SetDefault("NOTIFICATION_SMS_AWS_SMS_TYPE", "Transactional")
+	viper.SetDefault("MFA_LOCAL_DELIVERY_ENABLED", false)
+	viper.SetDefault("MFA_LOCAL_OUTBOX_PATH", "./storage/mfa-otp-outbox")
+	viper.SetDefault("MFA_MASTER_KEY", "")
+	viper.SetDefault(
+		"NOTIFICATION_WEBHOOK_ENABLED",
+		false,
+	)
+	viper.SetDefault(
+		"NOTIFICATION_WEBHOOK_PROVIDER_NAME",
+		"DDH_WEBHOOK",
+	)
+	viper.SetDefault(
+		"NOTIFICATION_WEBHOOK_SIGNATURE_HEADER",
+		"X-DDH-Signature",
+	)
+	viper.SetDefault(
+		"NOTIFICATION_WEBHOOK_TIMESTAMP_HEADER",
+		"X-DDH-Timestamp",
+	)
+	viper.SetDefault(
+		"NOTIFICATION_WEBHOOK_ALLOW_INSECURE_HTTP",
+		false,
+	)
+	viper.SetDefault(
+		"NOTIFICATION_WEBHOOK_TIMEOUT",
+		"20s",
+	)
 }
 
 func Load() (*Config, error) {
@@ -255,6 +459,15 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	dfirMLEngineTimeout, err :=
+		loadConfigurationDuration(
+			"DFIR_ML_ENGINE_TIMEOUT",
+			15*time.Second,
+		)
+	if err != nil {
+		return nil, err
+	}
+
 	preEncryptionWindowDuration, err :=
 		loadConfigurationDuration(
 			"PRE_ENCRYPTION_WINDOW_DURATION",
@@ -344,6 +557,13 @@ func Load() (*Config, error) {
 			),
 			Timeout:         aiRiskEngineTimeout,
 			DefaultValidity: aiRiskDefaultValidity,
+		},
+
+		DFIRML: DFIRMLConfig{
+			Enabled:      viper.GetBool("DFIR_ML_ENABLED"),
+			EngineURL:    strings.TrimSpace(viper.GetString("DFIR_ML_ENGINE_URL")),
+			ServiceToken: strings.TrimSpace(viper.GetString("DFIR_ML_SERVICE_TOKEN")),
+			Timeout:      dfirMLEngineTimeout,
 		},
 
 		PreEncryption: PreEncryptionConfig{
@@ -461,7 +681,11 @@ func Load() (*Config, error) {
 				AllowInsecureHTTP: viper.GetBool(
 					"NOTIFICATION_SMS_ALLOW_INSECURE_HTTP",
 				),
-				Timeout: smsTimeout,
+				Timeout:     smsTimeout,
+				AWSRegion:   strings.TrimSpace(viper.GetString("NOTIFICATION_SMS_AWS_REGION")),
+				AWSProfile:  strings.TrimSpace(viper.GetString("NOTIFICATION_SMS_AWS_PROFILE")),
+				AWSSenderID: strings.TrimSpace(viper.GetString("NOTIFICATION_SMS_AWS_SENDER_ID")),
+				AWSSMSType:  strings.TrimSpace(viper.GetString("NOTIFICATION_SMS_AWS_SMS_TYPE")),
 			},
 
 			Webhook: NotificationWebhookConfig{
@@ -489,6 +713,11 @@ func Load() (*Config, error) {
 				Timeout: webhookTimeout,
 			},
 		},
+		MFA: MFAConfig{
+			LocalDeliveryEnabled: viper.GetBool("MFA_LOCAL_DELIVERY_ENABLED"),
+			LocalOutboxPath:      strings.TrimSpace(viper.GetString("MFA_LOCAL_OUTBOX_PATH")),
+			MasterKey:            strings.TrimSpace(viper.GetString("MFA_MASTER_KEY")),
+		},
 	}
 
 	if err := validate(cfg); err != nil {
@@ -496,190 +725,6 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
-}
-
-func setConfigurationDefaults() {
-	setAdaptiveDeceptionDefaults()
-	setDeepfakeForensicsDefaults()
-
-	viper.SetDefault(
-		"AI_RISK_ENABLED",
-		true,
-	)
-	viper.SetDefault(
-		"AI_RISK_ENGINE_URL",
-		"http://127.0.0.1:8091",
-	)
-	viper.SetDefault(
-		"AI_RISK_ENGINE_TIMEOUT",
-		"15s",
-	)
-	viper.SetDefault(
-		"AI_RISK_DEFAULT_VALIDITY",
-		"24h",
-	)
-
-	viper.SetDefault(
-		"PRE_ENCRYPTION_ENABLED",
-		true,
-	)
-	viper.SetDefault(
-		"PRE_ENCRYPTION_WINDOW_DURATION",
-		"1m",
-	)
-	viper.SetDefault(
-		"PRE_ENCRYPTION_MINIMUM_SCORE",
-		25.0,
-	)
-	viper.SetDefault(
-		"PRE_ENCRYPTION_WORKER_COUNT",
-		2,
-	)
-	viper.SetDefault(
-		"PRE_ENCRYPTION_QUEUE_CAPACITY",
-		256,
-	)
-	viper.SetDefault(
-		"PRE_ENCRYPTION_ANALYSIS_TIMEOUT",
-		"30s",
-	)
-	viper.SetDefault(
-		"CANARY_STORAGE_PATH",
-		"./storage/canary",
-	)
-	viper.SetDefault(
-		"CANARY_DEPLOYMENT_ROOT",
-		"./storage/canary-deployments",
-	)
-
-	viper.SetDefault(
-		"NOTIFICATION_WORKER_ENABLED",
-		true,
-	)
-	viper.SetDefault(
-		"NOTIFICATION_WORKER_COUNT",
-		4,
-	)
-	viper.SetDefault(
-		"NOTIFICATION_BATCH_SIZE",
-		20,
-	)
-	viper.SetDefault(
-		"NOTIFICATION_POLL_INTERVAL",
-		"2s",
-	)
-	viper.SetDefault(
-		"NOTIFICATION_DELIVERY_TIMEOUT",
-		"30s",
-	)
-	viper.SetDefault(
-		"NOTIFICATION_MAINTENANCE_INTERVAL",
-		"1m",
-	)
-	viper.SetDefault(
-		"NOTIFICATION_STALE_PROCESSING_PERIOD",
-		"5m",
-	)
-
-	viper.SetDefault(
-		"NOTIFICATION_LOCAL_DESKTOP_ENABLED",
-		true,
-	)
-	viper.SetDefault(
-		"NOTIFICATION_LOCAL_DESKTOP_OUTBOX_PATH",
-		"./storage/notification-outbox/local-desktop",
-	)
-
-	viper.SetDefault(
-		"NOTIFICATION_EMAIL_ENABLED",
-		false,
-	)
-	viper.SetDefault(
-		"NOTIFICATION_EMAIL_PROVIDER_NAME",
-		"DDH_SMTP",
-	)
-	viper.SetDefault(
-		"NOTIFICATION_EMAIL_PORT",
-		587,
-	)
-	viper.SetDefault(
-		"NOTIFICATION_EMAIL_FROM_NAME",
-		"Digital Defense Hub",
-	)
-	viper.SetDefault(
-		"NOTIFICATION_EMAIL_SUBJECT_PREFIX",
-		"[DDH]",
-	)
-	viper.SetDefault(
-		"NOTIFICATION_EMAIL_USE_IMPLICIT_TLS",
-		false,
-	)
-	viper.SetDefault(
-		"NOTIFICATION_EMAIL_REQUIRE_STARTTLS",
-		true,
-	)
-	viper.SetDefault(
-		"NOTIFICATION_EMAIL_TLS_INSECURE_SKIP_VERIFY",
-		false,
-	)
-	viper.SetDefault(
-		"NOTIFICATION_EMAIL_TIMEOUT",
-		"30s",
-	)
-
-	viper.SetDefault(
-		"NOTIFICATION_SMS_ENABLED",
-		false,
-	)
-	viper.SetDefault(
-		"NOTIFICATION_SMS_PROVIDER_NAME",
-		"DDH_HTTP_SMS",
-	)
-	viper.SetDefault(
-		"NOTIFICATION_SMS_API_KEY_HEADER",
-		"Authorization",
-	)
-	viper.SetDefault(
-		"NOTIFICATION_SMS_API_KEY_PREFIX",
-		"Bearer",
-	)
-	viper.SetDefault(
-		"NOTIFICATION_SMS_DEFAULT_COUNTRY_CODE",
-		"+91",
-	)
-	viper.SetDefault(
-		"NOTIFICATION_SMS_ALLOW_INSECURE_HTTP",
-		false,
-	)
-	viper.SetDefault(
-		"NOTIFICATION_SMS_TIMEOUT",
-		"20s",
-	)
-
-	viper.SetDefault(
-		"NOTIFICATION_WEBHOOK_ENABLED",
-		false,
-	)
-	viper.SetDefault(
-		"NOTIFICATION_WEBHOOK_PROVIDER_NAME",
-		"DDH_WEBHOOK",
-	)
-	viper.SetDefault(
-		"NOTIFICATION_WEBHOOK_SIGNATURE_HEADER",
-		"X-DDH-Signature",
-	)
-	viper.SetDefault(
-		"NOTIFICATION_WEBHOOK_TIMESTAMP_HEADER",
-		"X-DDH-Timestamp",
-	)
-	viper.SetDefault(
-		"NOTIFICATION_WEBHOOK_ALLOW_INSECURE_HTTP",
-		false,
-	)
-	viper.SetDefault(
-		"NOTIFICATION_WEBHOOK_TIMEOUT",
-		"20s",
-	)
 }
 
 func loadConfigurationDuration(
@@ -796,6 +841,9 @@ func validate(
 		cfg.Notification,
 	); err != nil {
 		return err
+	}
+	if cfg.MFA.LocalDeliveryEnabled && !strings.EqualFold(strings.TrimSpace(cfg.App.Env), "development") {
+		return fmt.Errorf("MFA_LOCAL_DELIVERY_ENABLED is allowed only when APP_ENV=development")
 	}
 
 	return nil
@@ -978,10 +1026,11 @@ func validateNotificationConfig(
 		}
 	}
 
-	if cfg.SMS.Enabled &&
-		strings.TrimSpace(
-			cfg.SMS.EndpointURL,
-		) == "" {
+	if cfg.SMS.Enabled && strings.EqualFold(cfg.SMS.ProviderName, "AWS_SNS") {
+		if strings.TrimSpace(cfg.SMS.AWSRegion) == "" {
+			return fmt.Errorf("NOTIFICATION_SMS_AWS_REGION is required for AWS_SNS")
+		}
+	} else if cfg.SMS.Enabled && strings.TrimSpace(cfg.SMS.EndpointURL) == "" {
 		return fmt.Errorf(
 			"NOTIFICATION_SMS_ENDPOINT_URL is required",
 		)

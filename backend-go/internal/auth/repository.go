@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,6 +20,7 @@ var (
 	ErrSessionInactive            = errors.New("authentication session is not active")
 	ErrSessionExpired             = errors.New("authentication session has expired")
 	ErrSessionMismatch            = errors.New("authentication session does not belong to the user")
+	ErrSessionMFAUnverified       = errors.New("authentication session has not completed MFA")
 	ErrPasswordResetTokenNotFound = errors.New("password reset token is invalid or expired")
 )
 
@@ -49,6 +51,8 @@ func (r *Repository) FindUserByIdentifier(
 			u.email_verified,
 			u.phone_verified,
 			u.mfa_enabled,
+			u.mfa_secret_encrypted,
+			u.mfa_recovery_code_hashes,
 			u.must_change_password,
 			u.failed_login_attempts,
 			u.locked_until,
@@ -102,6 +106,8 @@ func (r *Repository) FindUserByIdentifier(
 		&user.EmailVerified,
 		&user.PhoneVerified,
 		&user.MFAEnabled,
+		&user.MFASecretEncrypted,
+		&user.MFARecoveryCodeHashes,
 		&user.MustChangePassword,
 		&user.FailedLoginAttempts,
 		&user.LockedUntil,
@@ -151,6 +157,8 @@ func (r *Repository) FindUserByID(
 			email_verified,
 			phone_verified,
 			mfa_enabled,
+			mfa_secret_encrypted,
+			mfa_recovery_code_hashes,
 			must_change_password,
 			failed_login_attempts,
 			locked_until,
@@ -186,6 +194,8 @@ func (r *Repository) FindUserByID(
 		&user.EmailVerified,
 		&user.PhoneVerified,
 		&user.MFAEnabled,
+		&user.MFASecretEncrypted,
+		&user.MFARecoveryCodeHashes,
 		&user.MustChangePassword,
 		&user.FailedLoginAttempts,
 		&user.LockedUntil,
@@ -211,6 +221,55 @@ func (r *Repository) FindUserByID(
 	}
 
 	return &user, nil
+}
+
+// RequiresPasswordChange returns the current password-change requirement for
+// a user in the authenticated organization. Looking this up from the database
+// keeps the access restriction authoritative even when an older JWT is still
+// valid.
+func (r *Repository) RequiresPasswordChange(
+	ctx context.Context,
+	userID uuid.UUID,
+	organizationID uuid.UUID,
+) (bool, error) {
+	if userID == uuid.Nil {
+		return false, fmt.Errorf("user ID is required")
+	}
+
+	if organizationID == uuid.Nil {
+		return false, fmt.Errorf("organization ID is required")
+	}
+
+	const query = `
+		SELECT must_change_password
+		FROM users
+		WHERE
+			id = $1
+			AND organization_id = $2
+			AND deleted_at IS NULL
+		LIMIT 1;
+	`
+
+	var mustChangePassword bool
+
+	err := r.db.QueryRow(
+		ctx,
+		query,
+		userID,
+		organizationID,
+	).Scan(&mustChangePassword)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, ErrUserNotFound
+		}
+
+		return false, fmt.Errorf(
+			"failed to retrieve password change requirement: %w",
+			err,
+		)
+	}
+
+	return mustChangePassword, nil
 }
 
 // UpdatePassword saves the new password hash and records the password
@@ -261,6 +320,93 @@ func (r *Repository) UpdatePassword(
 			"failed to update user password: %w",
 			err,
 		)
+	}
+
+	if commandTag.RowsAffected() == 0 {
+		return ErrUserNotFound
+	}
+
+	return nil
+}
+
+func (r *Repository) SaveMFAEnrollmentSecret(
+	ctx context.Context,
+	userID uuid.UUID,
+	organizationID uuid.UUID,
+	encryptedSecret []byte,
+	recoveryCodeHashes []string,
+) error {
+	if userID == uuid.Nil {
+		return fmt.Errorf("user ID is required")
+	}
+
+	if organizationID == uuid.Nil {
+		return fmt.Errorf("organization ID is required")
+	}
+
+	const query = `
+		UPDATE users
+		SET
+			mfa_secret_encrypted = $3,
+			mfa_recovery_code_hashes = $4,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE
+			id = $1
+			AND organization_id = $2
+			AND deleted_at IS NULL;
+	`
+
+	commandTag, err := r.db.Exec(
+		ctx,
+		query,
+		userID,
+		organizationID,
+		encryptedSecret,
+		recoveryCodeHashes,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to save MFA enrollment secret: %w", err)
+	}
+
+	if commandTag.RowsAffected() == 0 {
+		return ErrUserNotFound
+	}
+
+	return nil
+}
+
+func (r *Repository) EnableMFA(
+	ctx context.Context,
+	userID uuid.UUID,
+	organizationID uuid.UUID,
+) error {
+	if userID == uuid.Nil {
+		return fmt.Errorf("user ID is required")
+	}
+
+	if organizationID == uuid.Nil {
+		return fmt.Errorf("organization ID is required")
+	}
+
+	const query = `
+		UPDATE users
+		SET
+			mfa_enabled = TRUE,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE
+			id = $1
+			AND organization_id = $2
+			AND deleted_at IS NULL;
+	`
+
+	commandTag, err := r.db.Exec(
+		ctx,
+		query,
+		userID,
+		organizationID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to enable MFA for user: %w", err)
 	}
 
 	if commandTag.RowsAffected() == 0 {
@@ -470,10 +616,10 @@ func (r *Repository) GetActiveRoleCodes(
 			AND ur.is_active = TRUE
 			AND r.status = 'ACTIVE'
 			AND r.deleted_at IS NULL
-			AND ur.valid_from <= CURRENT_TIMESTAMP
+			AND ur.valid_from <= timezone('UTC', CURRENT_TIMESTAMP)
 			AND (
 				ur.expires_at IS NULL
-				OR ur.expires_at > CURRENT_TIMESTAMP
+				OR ur.expires_at > timezone('UTC', CURRENT_TIMESTAMP)
 			)
 		ORDER BY
 			ur.is_primary DESC,
@@ -518,6 +664,8 @@ func (r *Repository) GetActiveRoleCodes(
 			err,
 		)
 	}
+
+	log.Printf("GetActiveRoleCodes user=%s roles=%v\n", userID, roles)
 
 	return roles, nil
 }
@@ -726,6 +874,7 @@ func (r *Repository) CreateSession(
 	organizationID uuid.UUID,
 	accessToken string,
 	expiresAt time.Time,
+	mfaVerified bool,
 ) error {
 	if sessionID == uuid.Nil {
 		return fmt.Errorf("session ID is required")
@@ -774,7 +923,7 @@ func (r *Repository) CreateSession(
 			$4,
 			$5,
 			'ACTIVE',
-			FALSE,
+			$6,
 			CURRENT_TIMESTAMP,
 			CURRENT_TIMESTAMP,
 			CURRENT_TIMESTAMP,
@@ -790,6 +939,7 @@ func (r *Repository) CreateSession(
 		organizationID,
 		tokenHash,
 		expiresAt,
+		mfaVerified,
 	)
 	if err != nil {
 		return fmt.Errorf(
@@ -797,9 +947,6 @@ func (r *Repository) CreateSession(
 			err,
 		)
 	}
-
-	fmt.Println("INSERT SUCCESS")
-	fmt.Println("Session ID:", sessionID)
 
 	return nil
 }
@@ -838,12 +985,15 @@ func (r *Repository) ValidateSession(
 
 	const query = `
 		SELECT
-			user_id,
-			organization_id,
-			status,
-			expires_at
-		FROM authentication_sessions
-		WHERE id = $1
+			s.user_id,
+			s.organization_id,
+			s.status,
+			s.expires_at,
+			s.mfa_verified,
+			u.mfa_enabled
+		FROM authentication_sessions s
+		JOIN users u ON u.id = s.user_id
+		WHERE s.id = $1
 		LIMIT 1;
 	`
 
@@ -851,6 +1001,8 @@ func (r *Repository) ValidateSession(
 	var storedOrganizationID uuid.UUID
 	var status string
 	var expiresAt time.Time
+	var mfaVerified bool
+	var mfaEnabled bool
 
 	err := r.db.QueryRow(
 		ctx,
@@ -861,6 +1013,8 @@ func (r *Repository) ValidateSession(
 		&storedOrganizationID,
 		&status,
 		&expiresAt,
+		&mfaVerified,
+		&mfaEnabled,
 	)
 
 	if err != nil {
@@ -895,6 +1049,10 @@ func (r *Repository) ValidateSession(
 
 	if status != "ACTIVE" {
 		return ErrSessionInactive
+	}
+
+	if mfaEnabled && !mfaVerified {
+		return ErrSessionMFAUnverified
 	}
 
 	return nil

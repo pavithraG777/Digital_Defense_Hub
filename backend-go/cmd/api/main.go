@@ -10,10 +10,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/pavithraG777/cyber-security-platform/backend/internal/commandanalysis"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/config"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/database"
+	"github.com/pavithraG777/cyber-security-platform/backend/internal/evidencevault"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/logger"
+	"github.com/pavithraG777/cyber-security-platform/backend/internal/recovery"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/router"
+	"github.com/pavithraG777/cyber-security-platform/backend/internal/securityevents"
+	"github.com/pavithraG777/cyber-security-platform/backend/internal/threatintel"
+	"github.com/spf13/viper"
 	"go.uber.org/zap"
 )
 
@@ -47,7 +53,8 @@ func main() {
 		preEncryptionWorker,
 		adaptiveDeceptionHealthWorker,
 		adaptiveDeceptionFingerprintWorker,
-		deepfakeForensicsWorker :=
+		deepfakeForensicsWorker,
+		dfirWorker :=
 		router.SetupRouterWithRuntime(
 			db,
 			cfg,
@@ -58,6 +65,44 @@ func main() {
 			context.Background(),
 		)
 	defer cancelRuntime()
+	eventWorker := securityevents.NewWorker(db.Pool)
+	if err = eventWorker.Start(runtimeContext); err != nil {
+		logger.Log.Error("Security event worker failed to start", zap.Error(err))
+		return
+	}
+	if sandboxURL := viper.GetString("COMMAND_SANDBOX_URL"); sandboxURL != "" {
+		sandboxWorker := commandanalysis.NewSandboxWorker(db.Pool, sandboxURL, viper.GetString("COMMAND_SANDBOX_TOKEN"))
+		if err = sandboxWorker.Start(runtimeContext); err != nil {
+			logger.Log.Error("Command sandbox worker failed to start", zap.Error(err))
+			return
+		}
+	}
+	if recoveryURL := viper.GetString("RECOVERY_RUNNER_URL"); recoveryURL != "" {
+		recoveryWorker := recovery.NewWorker(db.Pool, recoveryURL, viper.GetString("RECOVERY_RUNNER_TOKEN"))
+		if err = recoveryWorker.Start(runtimeContext); err != nil {
+			logger.Log.Error("Recovery worker failed to start", zap.Error(err))
+			return
+		}
+	}
+	var providerWorker *threatintel.ProviderWorker
+	if providerURL := viper.GetString("THREAT_INTEL_PROVIDER_URL"); providerURL != "" {
+		providerWorker = threatintel.NewProviderWorker(db.Pool, providerURL, viper.GetString("THREAT_INTEL_PROVIDER_TOKEN"))
+	} else {
+		providerWorker, err = threatintel.NewLocalProviderWorker(db.Pool, viper.GetString("THREAT_INTEL_LOCAL_FEED_PATH"))
+		if err != nil {
+			logger.Log.Error("Local threat intelligence feed failed to load", zap.Error(err))
+			return
+		}
+	}
+	if err = providerWorker.Start(runtimeContext); err != nil {
+		logger.Log.Error("Threat intelligence provider worker failed to start", zap.Error(err))
+		return
+	}
+	integrityWorker := evidencevault.NewIntegrityWorker(db.Pool, evidencevault.LoadSigningKeysFromEnvironment())
+	if err = integrityWorker.Start(runtimeContext); err != nil {
+		logger.Log.Error("Evidence integrity worker failed to start", zap.Error(err))
+		return
+	}
 
 	if err = notificationModule.Start(
 		runtimeContext,
@@ -256,6 +301,35 @@ func main() {
 			}
 
 			cancelStop()
+			return
+		}
+	}
+
+	if dfirWorker != nil {
+		if err = dfirWorker.Start(
+			runtimeContext,
+		); err != nil {
+			logger.Log.Error(
+				"DFIR worker failed to start",
+				zap.Error(err),
+			)
+
+			stopContext, cancelStop := context.WithTimeout(context.Background(), 5*time.Second)
+			if deepfakeForensicsWorker != nil {
+				_ = deepfakeForensicsWorker.Stop(stopContext)
+			}
+			if adaptiveDeceptionHealthWorker != nil {
+				_ = adaptiveDeceptionHealthWorker.Stop(stopContext)
+			}
+			if adaptiveDeceptionFingerprintWorker != nil {
+				_ = adaptiveDeceptionFingerprintWorker.Stop(stopContext)
+			}
+			if preEncryptionWorker != nil {
+				_ = preEncryptionWorker.Stop(stopContext)
+			}
+			_ = notificationModule.Stop(stopContext)
+			cancelStop()
+
 			return
 		}
 	}

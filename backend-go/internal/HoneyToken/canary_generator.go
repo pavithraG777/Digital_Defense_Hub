@@ -8,17 +8,20 @@ import (
 	"crypto/sha256"
 	"encoding/csv"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
 	"image/png"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -26,7 +29,14 @@ import (
 var (
 	ErrUnsupportedCanaryType = errors.New("unsupported canary file type")
 	ErrInvalidCanaryFileName = errors.New("invalid canary file name")
+	ErrCanaryImportEmpty     = errors.New("imported canary file is empty")
+	ErrCanaryImportTooLarge  = errors.New("imported canary file exceeds 10 MiB")
+	ErrCanaryImportFormat    = errors.New("imported canary file format is not allowed or does not match its content")
 )
+
+// MaxCanaryImportSize is the maximum uploaded source file size accepted by
+// the passive canary import workflow.
+const MaxCanaryImportSize int64 = 10 << 20
 
 type CanaryGenerator struct {
 	storageRoot string
@@ -171,6 +181,115 @@ func (g *CanaryGenerator) Generate(
 	}, nil
 }
 
+// Import copies a validated source file byte-for-byte into the tenant canary
+// staging area. The source reader is never written to and no tracking marker
+// is injected into imported content.
+func (g *CanaryGenerator) Import(
+	ctx context.Context,
+	input canaryGenerationInput,
+	source io.Reader,
+) (*canaryGenerationResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	if input.ID == uuid.Nil {
+		return nil, errors.New("canary file ID is required")
+	}
+
+	if input.OrganizationID == uuid.Nil {
+		return nil, errors.New("organization ID is required")
+	}
+
+	if source == nil {
+		return nil, ErrCanaryImportEmpty
+	}
+
+	if !isSupportedCanaryType(input.CanaryType) {
+		return nil, ErrUnsupportedCanaryType
+	}
+
+	fileName, fileExtension, mimeType, err :=
+		normalizeImportedCanaryFileName(
+			input.FileName,
+			input.CanaryType,
+		)
+	if err != nil {
+		return nil, err
+	}
+
+	content, err := io.ReadAll(
+		io.LimitReader(source, MaxCanaryImportSize+1),
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to read imported canary file: %w",
+			err,
+		)
+	}
+
+	switch {
+	case len(content) == 0:
+		return nil, ErrCanaryImportEmpty
+
+	case int64(len(content)) > MaxCanaryImportSize:
+		return nil, ErrCanaryImportTooLarge
+	}
+
+	if err = validateImportedCanaryContent(
+		fileExtension,
+		input.CanaryType,
+		content,
+	); err != nil {
+		return nil, err
+	}
+
+	trackingIdentifier, err := generateCanaryTrackingIdentifier()
+	if err != nil {
+		return nil, err
+	}
+
+	directoryPath := filepath.Join(
+		g.storageRoot,
+		input.OrganizationID.String(),
+		input.ID.String(),
+	)
+
+	if err = os.MkdirAll(directoryPath, 0750); err != nil {
+		return nil, fmt.Errorf(
+			"failed to create canary directory: %w",
+			err,
+		)
+	}
+
+	filePath := filepath.Join(directoryPath, fileName)
+	if err = g.validateStoragePath(filePath); err != nil {
+		return nil, err
+	}
+
+	if err = ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	if err = writeCanaryFileAtomically(filePath, content); err != nil {
+		return nil, err
+	}
+
+	hash := sha256.Sum256(content)
+
+	return &canaryGenerationResult{
+		CanaryCode:         generateCanaryCode(input.ID),
+		FileName:           fileName,
+		FilePath:           filePath,
+		FileExtension:      fileExtension,
+		MimeType:           mimeType,
+		OriginalFileHash:   hex.EncodeToString(hash[:]),
+		HashAlgorithm:      CanaryHashAlgorithmSHA256,
+		FileSizeBytes:      int64(len(content)),
+		TrackingIdentifier: trackingIdentifier,
+	}, nil
+}
+
 // RemoveGeneratedFile removes a generated staging file after a failed
 // database operation. It only permits deletion inside the canary root.
 func (g *CanaryGenerator) RemoveGeneratedFile(
@@ -297,6 +416,283 @@ func normalizeCanaryFileName(
 	}
 
 	return baseName + extension, extension, mimeType, nil
+}
+
+func normalizeImportedCanaryFileName(
+	requestedFileName string,
+	canaryType string,
+) (string, string, string, error) {
+	requestedFileName = strings.TrimSpace(requestedFileName)
+
+	if requestedFileName == "" ||
+		strings.Contains(requestedFileName, "/") ||
+		strings.Contains(requestedFileName, `\`) {
+		return "", "", "", ErrInvalidCanaryFileName
+	}
+
+	cleanedName := strings.Map(
+		func(character rune) rune {
+			if unicode.IsControl(character) {
+				return -1
+			}
+
+			switch character {
+			case '<', '>', ':', '"', '/', '\\', '|', '?', '*':
+				return '_'
+			default:
+				return character
+			}
+		},
+		requestedFileName,
+	)
+
+	cleanedName = strings.Trim(cleanedName, ". ")
+	if cleanedName == "" {
+		return "", "", "", ErrInvalidCanaryFileName
+	}
+
+	extension := strings.ToLower(filepath.Ext(cleanedName))
+	baseName := strings.Trim(
+		strings.TrimSuffix(cleanedName, filepath.Ext(cleanedName)),
+		". ",
+	)
+	if extension == "" || baseName == "" {
+		return "", "", "", ErrInvalidCanaryFileName
+	}
+
+	baseRunes := []rune(baseName)
+	if len(baseRunes) > 160 {
+		baseName = string(baseRunes[:160])
+	}
+
+	if isReservedWindowsFileName(baseName) {
+		baseName += "_File"
+	}
+
+	mimeType, err := importedCanaryMimeType(canaryType, extension)
+	if err != nil {
+		return "", "", "", err
+	}
+
+	return baseName + extension, extension, mimeType, nil
+}
+
+func importedCanaryMimeType(
+	canaryType string,
+	extension string,
+) (string, error) {
+	formats := map[string]map[string]string{
+		CanaryTypeDocument: {
+			".txt":  "text/plain",
+			".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		},
+		CanaryTypeSpreadsheet: {
+			".csv":  "text/csv",
+			".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		},
+		CanaryTypePDF: {
+			".pdf": "application/pdf",
+		},
+		CanaryTypeImage: {
+			".png":  "image/png",
+			".jpg":  "image/jpeg",
+			".jpeg": "image/jpeg",
+			".webp": "image/webp",
+		},
+		CanaryTypeArchive: {
+			".zip": "application/zip",
+		},
+		CanaryTypeDatabaseBackup: {
+			".sql": "application/sql",
+		},
+		CanaryTypeConfiguration: {
+			".ini":  "text/plain",
+			".conf": "text/plain",
+			".cfg":  "text/plain",
+			".yaml": "application/yaml",
+			".yml":  "application/yaml",
+		},
+		CanaryTypeSourceCode: {
+			".go":   "text/x-go",
+			".py":   "text/x-python",
+			".js":   "text/javascript",
+			".ts":   "text/typescript",
+			".java": "text/x-java-source",
+			".c":    "text/x-c",
+			".cpp":  "text/x-c++",
+			".h":    "text/x-c",
+			".cs":   "text/plain",
+		},
+		CanaryTypeCredentialFile: {
+			".txt":  "text/plain",
+			".env":  "text/plain",
+			".json": "application/json",
+		},
+		CanaryTypeCustom: {
+			".txt":  "text/plain",
+			".log":  "text/plain",
+			".csv":  "text/csv",
+			".json": "application/json",
+		},
+	}
+
+	mimeTypes, ok := formats[canaryType]
+	if !ok {
+		return "", ErrUnsupportedCanaryType
+	}
+
+	mimeType, ok := mimeTypes[extension]
+	if !ok {
+		return "", ErrCanaryImportFormat
+	}
+
+	return mimeType, nil
+}
+
+func validateImportedCanaryContent(
+	extension string,
+	canaryType string,
+	content []byte,
+) error {
+	switch extension {
+	case ".txt", ".log", ".csv", ".sql", ".ini", ".conf", ".cfg",
+		".yaml", ".yml",
+		".env", ".go", ".py", ".js", ".ts", ".java", ".c", ".cpp",
+		".h", ".cs":
+		if !utf8.Valid(content) || bytes.IndexByte(content, 0) >= 0 {
+			return ErrCanaryImportFormat
+		}
+
+	case ".json":
+		if !json.Valid(content) {
+			return ErrCanaryImportFormat
+		}
+
+	case ".pdf":
+		if !bytes.HasPrefix(content, []byte("%PDF-")) {
+			return ErrCanaryImportFormat
+		}
+
+	case ".png":
+		if !bytes.HasPrefix(
+			content,
+			[]byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A},
+		) {
+			return ErrCanaryImportFormat
+		}
+
+	case ".jpg", ".jpeg":
+		if len(content) < 5 ||
+			!bytes.HasPrefix(content, []byte{0xFF, 0xD8, 0xFF}) ||
+			!bytes.HasSuffix(content, []byte{0xFF, 0xD9}) {
+			return ErrCanaryImportFormat
+		}
+
+	case ".webp":
+		if len(content) < 12 ||
+			!bytes.Equal(content[:4], []byte("RIFF")) ||
+			!bytes.Equal(content[8:12], []byte("WEBP")) {
+			return ErrCanaryImportFormat
+		}
+
+	case ".zip":
+		return validateImportedZip(content, "")
+
+	case ".docx":
+		return validateImportedZip(content, "word/")
+
+	case ".xlsx":
+		return validateImportedZip(content, "xl/")
+
+	default:
+		return ErrCanaryImportFormat
+	}
+
+	if _, err := importedCanaryMimeType(canaryType, extension); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func inferImportedCanaryType(
+	fileName string,
+) (string, error) {
+	switch strings.ToLower(filepath.Ext(strings.TrimSpace(fileName))) {
+	case ".txt", ".docx":
+		return CanaryTypeDocument, nil
+
+	case ".csv", ".xlsx":
+		return CanaryTypeSpreadsheet, nil
+
+	case ".pdf":
+		return CanaryTypePDF, nil
+
+	case ".png", ".jpg", ".jpeg", ".webp":
+		return CanaryTypeImage, nil
+
+	case ".zip":
+		return CanaryTypeArchive, nil
+
+	case ".sql":
+		return CanaryTypeDatabaseBackup, nil
+
+	case ".ini", ".conf", ".cfg", ".yaml", ".yml":
+		return CanaryTypeConfiguration, nil
+
+	case ".go", ".py", ".js", ".ts", ".java", ".c", ".cpp", ".h", ".cs":
+		return CanaryTypeSourceCode, nil
+
+	case ".env":
+		return CanaryTypeCredentialFile, nil
+
+	case ".json", ".log":
+		return CanaryTypeCustom, nil
+
+	default:
+		return "", ErrCanaryImportFormat
+	}
+}
+
+func validateImportedZip(
+	content []byte,
+	requiredPrefix string,
+) error {
+	archive, err := zip.NewReader(
+		bytes.NewReader(content),
+		int64(len(content)),
+	)
+	if err != nil || len(archive.File) == 0 || len(archive.File) > 10000 {
+		return ErrCanaryImportFormat
+	}
+
+	hasContentTypes := requiredPrefix == ""
+	hasRequiredPrefix := requiredPrefix == ""
+
+	for _, entry := range archive.File {
+		entryName := strings.ReplaceAll(entry.Name, `\`, "/")
+		cleanName := filepath.ToSlash(filepath.Clean(entryName))
+
+		if cleanName == ".." ||
+			strings.HasPrefix(cleanName, "../") ||
+			strings.HasPrefix(cleanName, "/") {
+			return ErrCanaryImportFormat
+		}
+
+		if cleanName == "[Content_Types].xml" {
+			hasContentTypes = true
+		}
+
+		if strings.HasPrefix(cleanName, requiredPrefix) {
+			hasRequiredPrefix = true
+		}
+	}
+
+	if !hasContentTypes || !hasRequiredPrefix {
+		return ErrCanaryImportFormat
+	}
+
+	return nil
 }
 
 func canaryFileFormat(

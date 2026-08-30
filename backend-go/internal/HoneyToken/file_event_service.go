@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"os"
 	"path"
 	"strconv"
 	"strings"
@@ -16,6 +18,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/pavithraG777/cyber-security-platform/backend/internal/dfir"
 )
 
 var (
@@ -49,6 +53,9 @@ type FileEventService struct {
 
 	fingerprintWorkerMu sync.RWMutex
 	fingerprintWorker   FileEventAnalysisSubmitter
+
+	dfirWorkerMu sync.RWMutex
+	dfirWorker   *dfir.Worker
 }
 
 // SetThreatWorker connects persisted file events to the asynchronous Threat
@@ -167,6 +174,99 @@ func (s *FileEventService) SetFingerprintWorker(
 	s.fingerprintWorker = worker
 
 	return nil
+}
+
+// SetDFIRWorker connects persisted file events to the DFIR worker for
+// additional analysis. It should be configured before the API server begins
+// accepting requests.
+func (s *FileEventService) SetDFIRWorker(
+	worker *dfir.Worker,
+) error {
+	if s == nil {
+		return errors.New(
+			"file event service is unavailable",
+		)
+	}
+
+	if worker == nil {
+		return errors.New(
+			"dfir worker is required",
+		)
+	}
+
+	s.dfirWorkerMu.Lock()
+	defer s.dfirWorkerMu.Unlock()
+
+	if s.dfirWorker != nil && s.dfirWorker != worker {
+		return errors.New(
+			"dfir worker is already configured",
+		)
+	}
+
+	s.dfirWorker = worker
+
+	return nil
+}
+
+func (s *FileEventService) submitFileEventForDFIRAnalysis(
+	event *FileEvent,
+) {
+	if s == nil || event == nil {
+		return
+	}
+
+	s.dfirWorkerMu.RLock()
+	worker := s.dfirWorker
+	s.dfirWorkerMu.RUnlock()
+
+	if worker == nil {
+		// Best-effort: POST to local DFIR ingest HTTP endpoint when worker
+		// isn't available in-process. Honor `DFIR_INGEST_URL` env var.
+		ingestURL := "http://127.0.0.1:8080/api/v1/dfir/ingest"
+		if v := os.Getenv("DFIR_INGEST_URL"); v != "" {
+			ingestURL = v
+		}
+
+		payload := map[string]interface{}{
+			"organization_id": event.OrganizationID.String(),
+			"file_event_id":   event.ID.String(),
+		}
+
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return
+		}
+
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ingestURL, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+
+		// Fire-and-forget; ignore errors
+		client := &http.Client{Timeout: 5 * time.Second}
+		// Retry with exponential backoff up to 3 attempts.
+		maxAttempts := 3
+		backoff := 200 * time.Millisecond
+		for attempt := 1; attempt <= maxAttempts; attempt++ {
+			resp, err := client.Do(req)
+			if err == nil && resp != nil {
+				resp.Body.Close()
+				if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+					break
+				}
+			}
+
+			if attempt < maxAttempts {
+				time.Sleep(backoff)
+				backoff = backoff * 2
+			}
+		}
+
+		return
+	}
+
+	worker.TrySubmitFileEventAnalysis(
+		event.OrganizationID,
+		event.ID,
+	)
 }
 
 func (s *FileEventService) submitFileEventForThreatAnalysis(
@@ -543,6 +643,9 @@ func (s *FileEventService) CreateFileEvent(
 				event,
 			)
 
+			// Also submit file events to the DFIR worker, if configured.
+			s.submitFileEventForDFIRAnalysis(event)
+
 			return buildCreateFileEventResponse(
 				event,
 			), nil
@@ -613,6 +716,22 @@ func (s *FileEventService) ListFileEvents(
 	departmentID, err := parseFileEventOptionalUUID(
 		request.DepartmentID,
 		"department ID",
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	honeytokenID, err := parseFileEventOptionalUUID(
+		request.HoneytokenID,
+		"honeytoken ID",
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	canaryFileID, err := parseFileEventOptionalUUID(
+		request.CanaryFileID,
+		"canary file ID",
 	)
 	if err != nil {
 		return nil, err
@@ -696,6 +815,8 @@ func (s *FileEventService) ListFileEvents(
 			FileEventListFilter{
 				OrganizationID: organizationID,
 				DepartmentID:   departmentID,
+				HoneytokenID:   honeytokenID,
+				CanaryFileID:   canaryFileID,
 				SourceType:     sourceType,
 				EventType:      eventType,
 				Severity:       severity,

@@ -58,7 +58,7 @@ func (r *Repository) GetAnalysisResult(
 	}
 
 	switch {
-	case IsDeepfakeJobType(job.JobType):
+	case IsDeepfakeAssessmentJobType(job.JobType):
 		bundle.Deepfake, err =
 			r.getDeepfakeResultByJob(
 				ctx,

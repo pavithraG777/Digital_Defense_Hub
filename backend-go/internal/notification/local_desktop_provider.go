@@ -50,6 +50,10 @@ type localDesktopNotificationEnvelope struct {
 	Message          string `json:"message"`
 	Severity         string `json:"severity"`
 	PriorityLevel    int    `json:"priority_level"`
+	// PlaySound is a client-side instruction. The backend never plays audio on
+	// the server; desktop/web clients may emit a short audible alert for urgent
+	// notifications after respecting their local accessibility preferences.
+	PlaySound bool `json:"play_sound"`
 
 	RequiresAcknowledgement bool            `json:"requires_acknowledgement"`
 	Payload                 json.RawMessage `json:"payload"`
@@ -168,6 +172,7 @@ func (p *LocalDesktopProvider) Send(
 		Message:                 message.Notification.Message,
 		Severity:                message.Notification.Severity,
 		PriorityLevel:           message.Notification.PriorityLevel,
+		PlaySound:               localDesktopShouldPlaySound(message.Notification.Severity, message.Notification.PriorityLevel),
 		RequiresAcknowledgement: message.Notification.RequiresAcknowledgement,
 		Payload:                 normalizeLocalDesktopPayload(message.Notification.Payload),
 		ScheduledAt:             message.Notification.ScheduledAt,
@@ -244,6 +249,11 @@ func (p *LocalDesktopProvider) Send(
 		Delivered:         false,
 		SentAt:            &queuedAt,
 	}, nil
+}
+
+func localDesktopShouldPlaySound(severity string, priority int) bool {
+	severity = strings.ToUpper(strings.TrimSpace(severity))
+	return severity == SeverityHigh || severity == SeverityCritical || severity == SeverityMedium || priority >= PriorityHigh
 }
 
 func (p *LocalDesktopProvider) writeOutboxFile(

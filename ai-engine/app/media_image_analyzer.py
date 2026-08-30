@@ -34,7 +34,10 @@ class ImageAnalyzer:
         self._feature_extractor = (
             feature_extractor or ImageFeatureExtractor()
         )
-        self._model_runner = model_runner
+        # Keep one runner for the lifetime of the analyzer. MediaModelRunner
+        # owns the verified PyTorch/ONNX model caches; constructing it inside
+        # analyze_deepfake() made every request reload the model from disk.
+        self._model_runner = model_runner or MediaModelRunner()
         self._allow_heuristic_fallback = (
             allow_heuristic_fallback
         )
@@ -63,11 +66,7 @@ class ImageAnalyzer:
 
         if model is not None:
             try:
-                runner = (
-                    self._model_runner
-                    or MediaModelRunner()
-                )
-                inference_result = runner.run_image(
+                inference_result = self._model_runner.run_image(
                     model,
                     image,
                 )

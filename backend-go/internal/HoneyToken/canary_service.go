@@ -88,6 +88,85 @@ func (s *CanaryService) CreateCanaryFile(
 	createdBy uuid.UUID,
 	request CreateCanaryFileRequest,
 ) (*CreateCanaryFileResponse, error) {
+	return s.createCanaryFile(
+		ctx,
+		organizationID,
+		createdBy,
+		request,
+		s.generator.Generate,
+		"generate",
+	)
+}
+
+// ImportCanaryFile validates and stages a byte-for-byte copy of an uploaded
+// file. It deliberately does not mutate or embed identifiers into the source
+// content; monitoring starts only after the resulting DRAFT is deployed.
+func (s *CanaryService) ImportCanaryFile(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	createdBy uuid.UUID,
+	request ImportCanaryFileRequest,
+	originalFileName string,
+	source io.Reader,
+) (*CreateCanaryFileResponse, error) {
+	if source == nil {
+		return nil, ErrCanaryImportEmpty
+	}
+
+	request.CanaryType = strings.ToUpper(
+		strings.TrimSpace(request.CanaryType),
+	)
+	if request.CanaryType == "" {
+		inferredType, err := inferImportedCanaryType(originalFileName)
+		if err != nil {
+			return nil, err
+		}
+
+		request.CanaryType = inferredType
+	}
+
+	createRequest := CreateCanaryFileRequest{
+		DepartmentID: request.DepartmentID,
+		PolicyID:     request.PolicyID,
+		OwnerUserID:  request.OwnerUserID,
+		FileName:     originalFileName,
+		CanaryType:   request.CanaryType,
+		Description:  request.Description,
+		ExpiresAt:    request.ExpiresAt,
+	}
+
+	return s.createCanaryFile(
+		ctx,
+		organizationID,
+		createdBy,
+		createRequest,
+		func(
+			materializeContext context.Context,
+			input canaryGenerationInput,
+		) (*canaryGenerationResult, error) {
+			return s.generator.Import(
+				materializeContext,
+				input,
+				source,
+			)
+		},
+		"import",
+	)
+}
+
+type canaryFileMaterializer func(
+	context.Context,
+	canaryGenerationInput,
+) (*canaryGenerationResult, error)
+
+func (s *CanaryService) createCanaryFile(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	createdBy uuid.UUID,
+	request CreateCanaryFileRequest,
+	materialize canaryFileMaterializer,
+	materializationAction string,
+) (*CreateCanaryFileResponse, error) {
 	if organizationID == uuid.Nil {
 		return nil, errors.New("organization ID is required")
 	}
@@ -201,7 +280,7 @@ func (s *CanaryService) CreateCanaryFile(
 
 	canaryID := uuid.New()
 
-	generatedFile, err := s.generator.Generate(
+	generatedFile, err := materialize(
 		ctx,
 		canaryGenerationInput{
 			ID:                   canaryID,
@@ -213,7 +292,8 @@ func (s *CanaryService) CreateCanaryFile(
 	)
 	if err != nil {
 		return nil, fmt.Errorf(
-			"failed to generate canary file: %w",
+			"failed to %s canary file: %w",
+			materializationAction,
 			err,
 		)
 	}
@@ -417,24 +497,18 @@ func (s *CanaryService) DeployCanaryFile(
 		return nil, ErrCanaryFileNotDeployable
 	}
 
-	deploymentDirectory, err :=
-		s.resolveDeploymentDirectory(
-			request.DeploymentDirectory,
-		)
+	var destinationPath string
+	if request.OriginalFilePath != nil && strings.TrimSpace(*request.OriginalFilePath) != "" {
+		destinationPath, err = resolveCanarySiblingDestination(canary.FileName, *request.OriginalFilePath)
+	} else {
+		var deploymentDirectory string
+		deploymentDirectory, err = s.resolveDeploymentDirectory(request.DeploymentDirectory)
+		if err == nil {
+			destinationPath = filepath.Join(deploymentDirectory, canarySiblingFileName(canary.FileName))
+		}
+	}
 	if err != nil {
 		return nil, err
-	}
-
-	destinationPath := filepath.Join(
-		deploymentDirectory,
-		canary.FileName,
-	)
-
-	if !isPathWithinCanaryRoot(
-		s.deploymentRoot,
-		destinationPath,
-	) {
-		return nil, ErrCanaryDeploymentOutsideRoot
 	}
 
 	if err = copyCanaryFileAtomically(
@@ -473,6 +547,19 @@ func (s *CanaryService) DeployCanaryFile(
 		request.DeviceIdentifier,
 	)
 
+	// A local Canary deployment should identify the machine without asking the
+	// operator to copy a hostname into the UI. Explicit agent-supplied values
+	// still take precedence for managed/remote deployments.
+	if deviceName == nil {
+		if hostname, hostnameErr := os.Hostname(); hostnameErr == nil {
+			deviceName = normalizeCanaryOptionalString(&hostname)
+		}
+	}
+	if deviceIdentifier == nil && deviceName != nil {
+		identifier := *deviceName
+		deviceIdentifier = &identifier
+	}
+
 	deployedCanary, err :=
 		s.repository.DeployCanaryFile(
 			ctx,
@@ -497,6 +584,67 @@ func (s *CanaryService) DeployCanaryFile(
 	return buildDeployCanaryFileResponse(
 		deployedCanary,
 	), nil
+}
+
+// canarySiblingFileName keeps the original extension and uses a single
+// leading dot so the monitored decoy is visibly related to its source while
+// remaining a distinct, Windows-compatible filename (report.pdf -> .report.pdf).
+func canarySiblingFileName(original string) string {
+	name := strings.TrimSpace(filepath.Base(original))
+	if name == "" || name == "." {
+		return ".canary"
+	}
+	if strings.HasPrefix(name, ".") {
+		return name
+	}
+	return "." + name
+}
+
+func resolveCanarySiblingDestination(canaryFileName, originalFilePath string) (string, error) {
+	originalFilePath = strings.TrimSpace(originalFilePath)
+	if originalFilePath == "" || !filepath.IsAbs(originalFilePath) {
+		return "", errors.New("original file path must be an absolute path")
+	}
+	absoluteOriginal, err := filepath.Abs(filepath.Clean(originalFilePath))
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve original file path: %w", err)
+	}
+	info, err := os.Stat(absoluteOriginal)
+	if err != nil {
+		return "", fmt.Errorf("original file is unavailable: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", errors.New("original file path must identify a regular file")
+	}
+	if !strings.EqualFold(filepath.Base(absoluteOriginal), filepath.Base(canaryFileName)) {
+		return "", errors.New("original file name does not match the Canary source filename")
+	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(absoluteOriginal))
+	if err != nil {
+		return "", fmt.Errorf("failed to validate original file directory: %w", err)
+	}
+	destination := filepath.Join(parent, canarySiblingFileName(canaryFileName))
+	if _, statErr := os.Lstat(destination); statErr == nil {
+		return "", ErrCanaryDeploymentFileExists
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return "", fmt.Errorf("failed to inspect Canary sibling path: %w", statErr)
+	}
+	return destination, nil
+}
+
+// DeactivateCanaryFile disarms a canary while preserving its physical and
+// database evidence. It must be explicitly deployed again to be monitored.
+func (s *CanaryService) DeactivateCanaryFile(ctx context.Context, organizationID uuid.UUID, canaryID string) (*GetCanaryFileResponse, error) {
+	parsedCanaryID, err := parseCanaryRequiredUUID(canaryID, "canary file ID")
+	if err != nil {
+		return nil, err
+	}
+	canary, err := s.repository.DeactivateCanaryFile(ctx, organizationID, parsedCanaryID)
+	if err != nil {
+		return nil, err
+	}
+	response := buildGetCanaryFileResponse(canary)
+	return &response, nil
 }
 
 func (s *CanaryService) resolveDeploymentDirectory(
@@ -590,6 +738,11 @@ func buildCreateCanaryFileResponse(
 func buildGetCanaryFileResponse(
 	canary *CanaryFile,
 ) GetCanaryFileResponse {
+	var deployedFilePath *string
+	if canary.DeployedAt != nil {
+		path := canary.FilePath
+		deployedFilePath = &path
+	}
 	return GetCanaryFileResponse{
 		ID:                       canary.ID,
 		OrganizationID:           canary.OrganizationID,
@@ -608,6 +761,7 @@ func buildGetCanaryFileResponse(
 		HoneytokenID:             canary.HoneytokenID,
 		DeployedDeviceName:       canary.DeployedDeviceName,
 		DeployedDeviceIdentifier: canary.DeployedDeviceIdentifier,
+		DeployedFilePath:         deployedFilePath,
 		OwnerUserID:              canary.OwnerUserID,
 		AccessCount:              canary.AccessCount,
 		LastTriggeredAt:          canary.LastTriggeredAt,
@@ -633,6 +787,7 @@ func buildDeployCanaryFileResponse(
 		FileName:                 canary.FileName,
 		DeployedDeviceName:       canary.DeployedDeviceName,
 		DeployedDeviceIdentifier: canary.DeployedDeviceIdentifier,
+		DeployedFilePath:         canary.FilePath,
 		Status:                   canary.Status,
 		DeployedAt:               deployedAt,
 	}

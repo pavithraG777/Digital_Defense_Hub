@@ -32,6 +32,16 @@ func RegisterRoutes(
 		deepfakeForensicsRoute,
 	)
 
+	forensicsGroup.GET(
+		"/health",
+		middleware.RequirePermission(databasePool, permissionViewDeepfakeForensics),
+		handler.GetEngineHealth,
+	)
+
+	policyGroup := forensicsGroup.Group("/organization-policy")
+	policyGroup.GET("", middleware.RequirePermission(databasePool, permissionViewDeepfakeForensics), handler.GetOrganizationMediaPolicy)
+	policyGroup.PUT("", middleware.RequirePermission(databasePool, permissionManageDeepfakeForensics), handler.UpdateOrganizationMediaPolicy)
+
 	assetGroup := forensicsGroup.Group(
 		"/media-assets",
 	)
@@ -61,6 +71,15 @@ func RegisterRoutes(
 			permissionViewDeepfakeForensics,
 		),
 		handler.GetMediaAsset,
+	)
+
+	assetGroup.GET(
+		"/:media_asset_id/preview",
+		middleware.RequirePermission(
+			databasePool,
+			permissionViewDeepfakeForensics,
+		),
+		handler.PreviewMediaAsset,
 	)
 
 	assetGroup.POST(
@@ -174,11 +193,18 @@ func RegisterRoutes(
 		),
 		handler.RetryAnalysisJob,
 	)
+	jobGroup.GET("/:analysis_job_id/review-workflow", middleware.RequirePermission(databasePool, permissionViewDeepfakeForensics), handler.GetReviewWorkflow)
+	jobGroup.POST("/:analysis_job_id/reviews", middleware.RequirePermission(databasePool, permissionManageDeepfakeForensics), handler.CreateReview)
+	jobGroup.POST("/:analysis_job_id/annotations", middleware.RequirePermission(databasePool, permissionManageDeepfakeForensics), handler.CreateAnnotation)
+	jobGroup.POST("/:analysis_job_id/case-links", middleware.RequirePermission(databasePool, permissionManageDeepfakeForensics), handler.CreateCaseLink)
 
 	reportGroup := forensicsGroup.Group("/forensic-reports")
+	reportGroup.GET("", middleware.RequirePermission(databasePool, permissionViewDeepfakeForensics), handler.ListMediaForensicReports)
 	reportGroup.GET("/:report_id", middleware.RequirePermission(databasePool, permissionViewDeepfakeForensics), handler.GetMediaForensicReport)
 	reportGroup.POST("/:report_id/approve", middleware.RequirePermission(databasePool, permissionManageDeepfakeForensics), handler.ApproveMediaForensicReport)
-	reportGroup.GET("/:report_id/download", middleware.RequirePermission(databasePool, permissionViewDeepfakeForensics), handler.DownloadMediaForensicReport)
+	reportGroup.POST("/:report_id/access-password", middleware.RequirePermission(databasePool, permissionManageDeepfakeForensics), handler.SetMediaForensicReportAccessPassword)
+	reportGroup.POST("/:report_id/preview", middleware.RequirePermission(databasePool, permissionViewDeepfakeForensics), handler.PreviewMediaForensicReport)
+	reportGroup.POST("/:report_id/download", middleware.RequirePermission(databasePool, permissionViewDeepfakeForensics), handler.DownloadMediaForensicReport)
 
 	modelGroup := forensicsGroup.Group(
 		"/models",
@@ -254,7 +280,9 @@ func RegisterRoutes(
 	trainingGroup.POST("/datasets/:dataset_id/versions/:dataset_version_id/validate", middleware.RequirePermission(databasePool, permissionManageDeepfakeForensics), handler.ValidateTrainingDatasetVersion)
 	trainingGroup.POST("/jobs", middleware.RequirePermission(databasePool, permissionManageDeepfakeForensics), handler.CreateTrainingJob)
 	trainingGroup.GET("/jobs", middleware.RequirePermission(databasePool, permissionViewDeepfakeForensics), handler.ListTrainingJobs)
+	trainingGroup.GET("/jobs/:training_job_id", middleware.RequirePermission(databasePool, permissionViewDeepfakeForensics), handler.GetTrainingJob)
 	trainingGroup.POST("/jobs/:training_job_id/cancel", middleware.RequirePermission(databasePool, permissionManageDeepfakeForensics), handler.CancelTrainingJob)
+	trainingGroup.POST("/jobs/:training_job_id/approval", middleware.RequirePermission(databasePool, permissionManageDeepfakeForensics), handler.DecideTrainingApproval)
 }
 
 func validateRouteDependencies(
@@ -274,7 +302,8 @@ func validateRouteDependencies(
 		handler.queryService == nil ||
 		handler.trustService == nil ||
 		handler.modelService == nil ||
-		handler.trainingService == nil {
+		handler.trainingService == nil ||
+		handler.policyService == nil {
 		panic(
 			"deepfake forensics handler is required",
 		)

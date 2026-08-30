@@ -12,7 +12,8 @@ type RegisterProtectedFileRequest struct {
 	Sensitivity      string `json:"sensitivity" binding:"required"`
 	Classification   string `json:"classification" binding:"required"`
 
-	RetentionPolicy string `json:"retention_policy"`
+	RetentionPolicy         string `json:"retention_policy"`
+	OriginalRetentionPolicy string `json:"original_retention_policy"`
 
 	EnableMonitoring bool `json:"enable_monitoring"`
 	EnableHoneytoken bool `json:"enable_honeytoken"`
@@ -69,6 +70,24 @@ type GetProtectedFileResponse struct {
 // will be loaded from the database.
 type RestoreProtectedFileRequest struct {
 	RestoreReason string `json:"restore_reason" binding:"required,min=3,max=500"`
+}
+
+// StartOwnerProtectedFileRestoreResponse contains the OTP challenge
+// details that allow the file owner to verify before restoration.
+type StartOwnerProtectedFileRestoreResponse struct {
+	MFAChallengeID   string `json:"mfa_challenge_id"`
+	ExpiresInSeconds int64  `json:"expires_in_seconds"`
+}
+
+// RestoreProtectedFileOwnerRequest represents an owner-initiated restore
+// request that includes a verified email OTP challenge.
+type RestoreProtectedFileOwnerRequest struct {
+	RestoreReason  string `json:"restore_reason" binding:"required,min=3,max=500"`
+	MFAChallengeID string `json:"mfa_challenge_id" binding:"required,uuid"`
+	EmailCode      string `json:"email_code" binding:"required,len=6,numeric"`
+	Password       string `json:"password" binding:"required,min=8,max=128"`
+	DeviceID       string `json:"device_id" binding:"required,min=8,max=255"`
+	Download       bool   `json:"download"`
 }
 
 // RestoreProtectedFileResponse contains safe information about a

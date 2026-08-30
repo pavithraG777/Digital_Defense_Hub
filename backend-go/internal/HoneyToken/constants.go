@@ -11,6 +11,7 @@ const (
 const (
 	FileCategoryCredentials = "CREDENTIALS"
 	FileCategoryFinancial   = "FINANCIAL"
+	FileCategoryPayroll     = "PAYROLL"
 	FileCategoryEmployee    = "EMPLOYEE"
 	FileCategoryCustomer    = "CUSTOMER"
 	FileCategoryMedical     = "MEDICAL"

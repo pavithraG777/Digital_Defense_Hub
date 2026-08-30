@@ -801,6 +801,25 @@ func (r *Repository) DeployHoneytoken(
 	return token, nil
 }
 
+// DeactivateHoneytoken stops future validation while retaining the record and
+// its existing trigger evidence for investigation.
+func (r *Repository) DeactivateHoneytoken(ctx context.Context, organizationID, honeytokenID uuid.UUID) (*Honeytoken, error) {
+	const query = `UPDATE honeytokens SET status = 'INACTIVE', updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL AND status IN ('ACTIVE', 'TRIGGERED')
+		RETURNING id, organization_id, department_id, policy_id, honeytoken_code, honeytoken_name, honeytoken_type,
+		description, decoy_username, decoy_email, decoy_value_encrypted, decoy_value_hash, value_prefix,
+		target_system, deployment_location, classification, access_count, last_triggered_at, owner_user_id,
+		created_by, deployed_at, expires_at, status, created_at, updated_at, deleted_at;`
+	token, err := scanHoneytoken(r.db.QueryRow(ctx, query, honeytokenID, organizationID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrHoneytokenNotDeployable
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to deactivate honeytoken: %w", err)
+	}
+	return token, nil
+}
+
 // RecordHoneytokenTrigger atomically records one confirmed access.
 //
 // ACTIVE changes to TRIGGERED. Subsequent confirmed accesses continue

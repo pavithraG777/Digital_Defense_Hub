@@ -1,0 +1,89 @@
+name: Backend Security Gate
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'backend-go/**'
+      - 'scripts/**'
+      - '.github/workflows/backend-security.yml'
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: backend-go/go.mod
+          cache-dependency-path: backend-go/go.sum
+
+      - name: Validate ordered migrations
+        shell: pwsh
+        run: ./scripts/apply-platform-migrations.ps1 -ValidateOnly
+
+      - name: Verify formatting
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BASE_SHA: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base="$PR_BASE_SHA"
+          elif [ -n "$PUSH_BASE_SHA" ] && [ "$PUSH_BASE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            base="$PUSH_BASE_SHA"
+          else
+            base="HEAD^"
+          fi
+          mapfile -t changed_go_files < <(git diff --name-only --diff-filter=ACMRT "$base" HEAD -- backend-go | grep -E '\.go$' || true)
+          if [ "${#changed_go_files[@]}" -eq 0 ]; then
+            exit 0
+          fi
+          files=$(gofmt -l "${changed_go_files[@]}")
+          if [ -n "$files" ]; then
+            echo "Go files require gofmt:"
+            echo "$files"
+            exit 1
+          fi
+
+      - name: Run static analysis
+        working-directory: backend-go
+        run: go vet ./...
+
+      - name: Run complete backend tests
+        working-directory: backend-go
+        run: go test -count=1 ./...
+
+      - name: Run race tests for security-critical engines
+        working-directory: backend-go
+        run: go test -race -count=1 ./internal/securityevents ./internal/commandanalysis ./internal/evidencevault ./internal/attribution ./internal/recovery ./internal/health
+
+      - name: Install Go vulnerability scanner
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Scan reachable Go dependencies
+        working-directory: backend-go
+        run: govulncheck ./...
+
+      - name: Reject committed private keys
+        shell: pwsh
+        run: |
+          $matches = git grep -n -I -E -- 'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|EVIDENCE_SIGNING_PRIVATE_KEY_BASE64=[A-Za-z0-9+/]{20,}' -- ':!*.example' ':!*.md'
+          if ($LASTEXITCODE -eq 0 -and $matches) {
+            Write-Error "Potential private key material is committed:`n$matches"
+          }
+          if ($LASTEXITCODE -gt 1) { exit $LASTEXITCODE }

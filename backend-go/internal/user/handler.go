@@ -519,3 +519,31 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 		updatedUser,
 	)
 }
+
+func (h *Handler) ChangeAccountStatus(c *gin.Context) {
+	organizationID, ok := getUUIDFromContext(c, "organization_id")
+	if !ok {
+		response.Unauthorized(c, "Organization information is missing", nil)
+		return
+	}
+	userID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		response.BadRequest(c, "Invalid user ID", nil)
+		return
+	}
+	var req ChangeAccountStatusRequest
+	if err = c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid status request", err.Error())
+		return
+	}
+	updated, err := h.service.ChangeAccountStatus(c.Request.Context(), organizationID, userID, req.Status)
+	if errors.Is(err, ErrUserNotFound) {
+		response.NotFound(c, "User not found", nil)
+		return
+	}
+	if err != nil {
+		response.BadRequest(c, "Unable to change account status", err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, "User account status updated", updated)
+}

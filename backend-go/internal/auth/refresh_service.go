@@ -57,6 +57,15 @@ func (s *Service) RefreshAccessToken(
 		return nil, ErrRefreshSessionMismatch
 	}
 
+	if err := s.repository.ValidateSession(
+		ctx,
+		storedRefreshToken.SessionID,
+		user.ID,
+		user.OrganizationID,
+	); err != nil {
+		return nil, err
+	}
+
 	roles, err := s.repository.GetActiveRoleCodes(
 		ctx,
 		user.ID,

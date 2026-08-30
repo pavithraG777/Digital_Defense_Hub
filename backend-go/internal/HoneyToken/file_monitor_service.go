@@ -28,10 +28,13 @@ var (
 )
 
 const (
-	defaultFileMonitorWorkers         = 4
-	defaultFileMonitorQueueSize       = 1024
-	defaultFileMonitorDebounceWindow  = 750 * time.Millisecond
-	defaultFileMonitorRefreshInterval = 30 * time.Second
+	defaultFileMonitorWorkers        = 4
+	defaultFileMonitorQueueSize      = 1024
+	defaultFileMonitorDebounceWindow = 750 * time.Millisecond
+	// Newly deployed canaries must become watch targets promptly. A short
+	// refresh interval keeps the local desktop workflow responsive without
+	// requiring an operator to restart the service or wait half a minute.
+	defaultFileMonitorRefreshInterval = 3 * time.Second
 )
 
 type FileMonitorService struct {
@@ -524,7 +527,9 @@ func (s *FileMonitorService) processFileMonitorJob(
 		ParentProcessName: nil,
 		CommandLine:       nil,
 		ProcessHash:       nil,
-		SystemUsername:    nil,
+		SystemUsername: fileMonitorOptionalStringPointer(
+			fileMonitorRuntimeUsername(),
+		),
 		DeviceName: fileMonitorOptionalStringPointer(
 			deviceName,
 		),
@@ -656,7 +661,6 @@ func (s *FileMonitorService) refreshTargets(
 	}
 
 	s.targetMutex.Lock()
-	defer s.targetMutex.Unlock()
 
 	for directoryPath := range requiredDirectories {
 		if _, alreadyWatched :=
@@ -710,8 +714,93 @@ func (s *FileMonitorService) refreshTargets(
 	}
 
 	s.targets = newTargets
+	s.targetMutex.Unlock()
+
+	// Windows can occasionally coalesce or omit a notification when an
+	// application saves a file by replacing it. Verify the armed files after
+	// every target refresh so a save, rename, or deletion is still detected.
+	s.queueIntegrityDriftChecks(ctx, canaryFiles)
 
 	return nil
+}
+
+func (s *FileMonitorService) queueIntegrityDriftChecks(
+	ctx context.Context,
+	canaryFiles []CanaryFile,
+) {
+	for index := range canaryFiles {
+		canary := canaryFiles[index]
+		if canary.Status != CanaryStatusActive &&
+			canary.Status != CanaryStatusDeployed {
+			continue
+		}
+
+		eventType := ""
+		canaryStatus := ""
+
+		fileInfo, statErr := os.Stat(canary.FilePath)
+		switch {
+		case errors.Is(statErr, os.ErrNotExist):
+			eventType = EventTypeDeleted
+			canaryStatus = CanaryStatusMissing
+
+		case statErr != nil:
+			s.logger.Warn(
+				"Unable to verify Canary file integrity",
+				zap.String("canary_id", canary.ID.String()),
+				zap.Error(statErr),
+			)
+			continue
+
+		case !fileInfo.Mode().IsRegular():
+			eventType = EventTypeDeleted
+			canaryStatus = CanaryStatusMissing
+
+		default:
+			currentHash, hashErr := calculateCanaryFileSHA256(canary.FilePath)
+			if hashErr != nil {
+				s.logger.Warn(
+					"Unable to hash Canary file during integrity check",
+					zap.String("canary_id", canary.ID.String()),
+					zap.Error(hashErr),
+				)
+				continue
+			}
+
+			if strings.EqualFold(currentHash, canary.OriginalFileHash) {
+				continue
+			}
+
+			eventType = EventTypeModified
+			canaryStatus = CanaryStatusTampered
+		}
+
+		if s.shouldDebounceEvent(
+			canary.ID.String()+"|"+eventType,
+			time.Now().UTC(),
+		) {
+			continue
+		}
+
+		job := fileMonitorJob{
+			canary:       canary,
+			eventType:    eventType,
+			canaryStatus: canaryStatus,
+			eventPath:    canary.FilePath,
+			occurredAt:   time.Now().UTC(),
+		}
+
+		select {
+		case s.jobs <- job:
+		case <-ctx.Done():
+			return
+		default:
+			s.logger.Error(
+				"File monitor queue is full during integrity check",
+				zap.String("canary_id", canary.ID.String()),
+			)
+		}
+	}
 }
 
 func (s *FileMonitorService) shouldDebounceEvent(
@@ -796,6 +885,16 @@ func fileEventCollectorForRuntime() string {
 	default:
 		return FileEventCollectorAgent
 	}
+}
+
+func fileMonitorRuntimeUsername() string {
+	for _, environmentKey := range []string{"USERNAME", "USER"} {
+		if value := strings.TrimSpace(os.Getenv(environmentKey)); value != "" {
+			return value
+		}
+	}
+
+	return ""
 }
 
 func normalizeMonitoredFilePath(

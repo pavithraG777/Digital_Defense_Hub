@@ -604,6 +604,36 @@ func (h *HoneytokenHandler) DeployHoneytoken(
 	)
 }
 
+// DeactivateHoneytoken disarms a record while retaining its audit evidence.
+func (h *HoneytokenHandler) DeactivateHoneytoken(c *gin.Context) {
+	organizationID, ok := honeytokenUUIDFromContext(c, "organization_id")
+	if !ok {
+		response.Unauthorized(c, "Organization information is missing", nil)
+		return
+	}
+	honeytokenID, err := uuid.Parse(strings.TrimSpace(c.Param("id")))
+	if err != nil || honeytokenID == uuid.Nil {
+		response.BadRequest(c, "Invalid honeytoken ID", nil)
+		return
+	}
+	var request UpdateHoneytokenStatusRequest
+	if err = c.ShouldBindJSON(&request); err != nil || strings.ToUpper(strings.TrimSpace(request.Status)) != HoneytokenStatusInactive {
+		response.BadRequest(c, "Only the INACTIVE lifecycle transition is allowed", nil)
+		return
+	}
+	result, err := h.service.DeactivateHoneytoken(c.Request.Context(), organizationID, honeytokenID)
+	if errors.Is(err, ErrHoneytokenNotDeployable) {
+		response.Error(c, http.StatusConflict, "Honeytoken is not currently armed", nil)
+		return
+	}
+	if err != nil {
+		_ = c.Error(err)
+		response.InternalServerError(c, "Failed to deactivate honeytoken", nil)
+		return
+	}
+	response.OK(c, "Honeytoken deactivated successfully", result)
+}
+
 // ValidateHoneytoken validates an observed value and records a trigger
 // when it matches an active honeytoken.
 func (h *HoneytokenHandler) ValidateHoneytoken(

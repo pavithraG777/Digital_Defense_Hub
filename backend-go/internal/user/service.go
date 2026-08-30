@@ -319,3 +319,11 @@ func (s *Service) UpdateUser(
 		req,
 	)
 }
+
+func (s *Service) ChangeAccountStatus(ctx context.Context, organizationID, userID uuid.UUID, status string) (*GetUserResponse, error) {
+	status = strings.ToUpper(strings.TrimSpace(status))
+	if status != "ACTIVE" && status != "BLOCKED" {
+		return nil, errors.New("unsupported account status")
+	}
+	return s.repository.ChangeAccountStatus(ctx, organizationID, userID, status)
+}

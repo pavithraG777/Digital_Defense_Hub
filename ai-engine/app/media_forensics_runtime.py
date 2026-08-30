@@ -63,6 +63,15 @@ class MediaForensicsRuntime:
                 settings.media_backend_storage_root,
             )
         )
+        # Approved training artifacts are written by the backend training
+        # worker into a shared, configured root.  They remain hash-verified
+        # before inference and are the only model files allowed outside the
+        # packaged model directory.
+        self.training_artifact_root = (
+            self._resolve_project_path(
+                settings.training_artifact_root,
+            )
+        )
 
         self.tesseract_executable = (
             settings.tesseract_executable
@@ -272,8 +281,9 @@ class MediaForensicsRuntime:
                 candidate
             ).resolve()
 
-            if project_candidate.is_relative_to(
-                self.model_root
+            if any(
+                project_candidate.is_relative_to(root)
+                for root in self._model_roots()
             ):
                 resolved_path = project_candidate
             else:
@@ -282,11 +292,13 @@ class MediaForensicsRuntime:
                     candidate
                 ).resolve()
 
-        self._require_within(
-            resolved_path,
-            self.model_root,
-            "model file",
-        )
+        if not any(
+            resolved_path == root or root in resolved_path.parents
+            for root in self._model_roots()
+        ):
+            raise MediaRuntimeError(
+                "model file is outside configured model roots"
+            )
 
         if not resolved_path.is_file():
             raise MediaRuntimeError(
@@ -294,6 +306,12 @@ class MediaForensicsRuntime:
             )
 
         return resolved_path
+
+    def _model_roots(self) -> tuple[Path, ...]:
+        return (
+            self.model_root,
+            self.training_artifact_root,
+        )
 
     def verify_file_hash(
         self,

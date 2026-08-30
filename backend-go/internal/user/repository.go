@@ -812,3 +812,14 @@ func (r *Repository) UpdateUser(
 		userID,
 	)
 }
+
+func (r *Repository) ChangeAccountStatus(ctx context.Context, organizationID, userID uuid.UUID, status string) (*GetUserResponse, error) {
+	tag, err := r.pool.Exec(ctx, `UPDATE users SET account_status=$1, updated_at=NOW() WHERE id=$2 AND organization_id=$3 AND deleted_at IS NULL`, status, userID, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("change user account status: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrUserNotFound
+	}
+	return r.GetUserByID(ctx, organizationID, userID)
+}

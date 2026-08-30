@@ -54,6 +54,7 @@ type RemovePermissionRequest struct {
 }
 
 type ReplacePermissionsRequest struct {
-	PermissionIDs []uuid.UUID `json:"permission_ids" binding:"required,min=1"`
+	// An empty selection intentionally clears every active permission from a role.
+	PermissionIDs []uuid.UUID `json:"permission_ids"`
 	ExpiresAt     *time.Time  `json:"expires_at"`
 }

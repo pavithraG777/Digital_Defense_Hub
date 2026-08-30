@@ -92,3 +92,10 @@ type UpdateUserRequest struct {
 	Designation   *string `json:"designation"`
 	OfficialPhone *string `json:"official_phone"`
 }
+
+// ChangeAccountStatusRequest intentionally supports reversible lifecycle
+// control instead of deleting user accounts and their investigation history.
+type ChangeAccountStatusRequest struct {
+	Status string `json:"status" binding:"required,oneof=ACTIVE BLOCKED"`
+	Reason string `json:"reason" binding:"omitempty,max=500"`
+}

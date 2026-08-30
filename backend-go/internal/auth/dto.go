@@ -9,14 +9,37 @@ import (
 type LoginRequest struct {
 	Identifier string `json:"identifier" binding:"required"`
 	Password   string `json:"password" binding:"required,min=8"`
+	IPAddress  string `json:"ip_address,omitempty"`
+	UserAgent  string `json:"user_agent,omitempty"`
+	DeviceID   string `json:"device_id,omitempty"`
 }
 
 type LoginResponse struct {
-	AccessToken      string       `json:"access_token"`
-	RefreshToken     string       `json:"refresh_token,omitempty"`
-	TokenType        string       `json:"token_type"`
-	ExpiresInSeconds int64        `json:"expires_in_seconds"`
-	User             UserResponse `json:"user"`
+	AccessToken      string                     `json:"access_token"`
+	RefreshToken     string                     `json:"refresh_token,omitempty"`
+	TokenType        string                     `json:"token_type"`
+	ExpiresInSeconds int64                      `json:"expires_in_seconds"`
+	User             UserResponse               `json:"user"`
+	Risk             *AdaptiveLoginRiskResponse `json:"risk,omitempty"`
+}
+
+// AdaptiveLoginRiskResponse is the publicly serializable surface for the auth
+// risk posture signal. It can be attached to login responses to keep risk
+// explanations close to the session decision.
+type AdaptiveLoginRiskResponse struct {
+	RiskScore         int      `json:"risk_score"`
+	RiskLevel         string   `json:"risk_level"`
+	RequiresStepUpMFA bool     `json:"requires_step_up_mfa"`
+	RiskFlags         []string `json:"risk_flags"`
+	Summary           string   `json:"summary"`
+}
+
+// LoginResult is either a completed login or an MFA challenge. It never
+// contains tokens while MFA is still pending.
+type LoginResult struct {
+	Login        *LoginResponse
+	MFAChallenge *MFAChallengeResponse
+	Risk         *AdaptiveLoginRiskResponse
 }
 
 type UserResponse struct {

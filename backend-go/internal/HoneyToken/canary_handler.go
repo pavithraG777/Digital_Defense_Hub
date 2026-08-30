@@ -17,6 +17,8 @@ type CanaryHandler struct {
 	service *CanaryService
 }
 
+const maxCanaryImportRequestSize = MaxCanaryImportSize + (1 << 20)
+
 func NewCanaryHandler(
 	service *CanaryService,
 ) *CanaryHandler {
@@ -97,6 +99,139 @@ func (h *CanaryHandler) CreateCanaryFile(
 	response.Created(
 		c,
 		"Canary file created successfully",
+		createdCanary,
+	)
+}
+
+// ImportCanaryFile accepts a passive multipart upload and stages a validated
+// copy as a DRAFT canary. The original client-side file is never modified.
+func (h *CanaryHandler) ImportCanaryFile(
+	c *gin.Context,
+) {
+	if !h.isAvailable() {
+		response.InternalServerError(
+			c,
+			"Canary handler is unavailable",
+			nil,
+		)
+		return
+	}
+
+	organizationID, ok := canaryUUIDFromContext(
+		c,
+		"organization_id",
+	)
+	if !ok {
+		response.Unauthorized(
+			c,
+			"Organization information is missing",
+			nil,
+		)
+		return
+	}
+
+	createdBy, ok := canaryUUIDFromContext(c, "user_id")
+	if !ok {
+		response.Unauthorized(
+			c,
+			"User information is missing",
+			nil,
+		)
+		return
+	}
+
+	c.Request.Body = http.MaxBytesReader(
+		c.Writer,
+		c.Request.Body,
+		maxCanaryImportRequestSize,
+	)
+
+	fileHeader, err := c.FormFile("file")
+	if err != nil {
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			response.Error(
+				c,
+				http.StatusRequestEntityTooLarge,
+				"Imported canary file is too large",
+				nil,
+			)
+			return
+		}
+
+		response.BadRequest(
+			c,
+			"A canary source file is required",
+			err.Error(),
+		)
+		return
+	}
+
+	if fileHeader.Size <= 0 {
+		response.BadRequest(
+			c,
+			"Invalid canary source file",
+			ErrCanaryImportEmpty.Error(),
+		)
+		return
+	}
+
+	if fileHeader.Size > MaxCanaryImportSize {
+		response.Error(
+			c,
+			http.StatusRequestEntityTooLarge,
+			"Imported canary file is too large",
+			nil,
+		)
+		return
+	}
+
+	description := canaryOptionalFormValue(c.PostForm("description"))
+	if description != nil && len([]rune(*description)) > 2000 {
+		response.BadRequest(
+			c,
+			"Invalid canary file request",
+			"description must not exceed 2000 characters",
+		)
+		return
+	}
+
+	request := ImportCanaryFileRequest{
+		DepartmentID: canaryOptionalFormValue(c.PostForm("department_id")),
+		PolicyID:     canaryOptionalFormValue(c.PostForm("policy_id")),
+		OwnerUserID:  canaryOptionalFormValue(c.PostForm("owner_user_id")),
+		CanaryType:   strings.TrimSpace(c.PostForm("canary_type")),
+		Description:  description,
+		ExpiresAt:    canaryOptionalFormValue(c.PostForm("expires_at")),
+	}
+
+	source, err := fileHeader.Open()
+	if err != nil {
+		response.BadRequest(
+			c,
+			"Unable to read canary source file",
+			nil,
+		)
+		return
+	}
+	defer source.Close()
+
+	createdCanary, err := h.service.ImportCanaryFile(
+		c.Request.Context(),
+		organizationID,
+		createdBy,
+		request,
+		fileHeader.Filename,
+		source,
+	)
+	if err != nil {
+		handleImportCanaryFileError(c, err)
+		return
+	}
+
+	response.Created(
+		c,
+		"Canary file imported successfully",
 		createdCanary,
 	)
 }
@@ -273,6 +408,37 @@ func (h *CanaryHandler) DeployCanaryFile(
 	)
 }
 
+// DeactivateCanaryFile stops monitoring but keeps the deployed copy and
+// all trigger history for controlled investigation and later redeployment.
+func (h *CanaryHandler) DeactivateCanaryFile(c *gin.Context) {
+	organizationID, ok := canaryUUIDFromContext(c, "organization_id")
+	if !ok {
+		response.Unauthorized(c, "Organization information is missing", nil)
+		return
+	}
+	canaryID := strings.TrimSpace(c.Param("id"))
+	if _, err := uuid.Parse(canaryID); err != nil {
+		response.BadRequest(c, "Invalid canary file ID", nil)
+		return
+	}
+	var request UpdateCanaryFileStatusRequest
+	if err := c.ShouldBindJSON(&request); err != nil || strings.ToUpper(strings.TrimSpace(request.Status)) != CanaryStatusInactive {
+		response.BadRequest(c, "Only the INACTIVE lifecycle transition is allowed", nil)
+		return
+	}
+	result, err := h.service.DeactivateCanaryFile(c.Request.Context(), organizationID, canaryID)
+	if errors.Is(err, ErrCanaryFileNotDeployable) {
+		response.Error(c, http.StatusConflict, "Canary is not currently armed", nil)
+		return
+	}
+	if err != nil {
+		_ = c.Error(err)
+		response.InternalServerError(c, "Failed to deactivate canary file", nil)
+		return
+	}
+	response.OK(c, "Canary file deactivated successfully", result)
+}
+
 func (h *CanaryHandler) isAvailable() bool {
 	return h != nil && h.service != nil
 }
@@ -355,6 +521,81 @@ func validateCanaryCreateRequest(
 	}
 
 	return nil
+}
+
+func canaryOptionalFormValue(
+	value string,
+) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+
+	return &value
+}
+
+func handleImportCanaryFileError(
+	c *gin.Context,
+	err error,
+) {
+	switch {
+	case errors.Is(err, ErrCanaryImportTooLarge):
+		response.Error(
+			c,
+			http.StatusRequestEntityTooLarge,
+			"Imported canary file is too large",
+			nil,
+		)
+
+	case errors.Is(err, ErrCanaryImportEmpty),
+		errors.Is(err, ErrCanaryImportFormat),
+		errors.Is(err, ErrInvalidCanaryFileName),
+		errors.Is(err, ErrUnsupportedCanaryType),
+		errors.Is(err, ErrCanaryFileExpired):
+		response.BadRequest(
+			c,
+			"Invalid canary import request",
+			err.Error(),
+		)
+
+	case errors.Is(err, ErrCanaryDepartmentNotFound),
+		errors.Is(err, ErrCanaryPolicyNotFound),
+		errors.Is(err, ErrCanaryOwnerNotFound),
+		errors.Is(err, ErrCanaryCreatorNotFound):
+		response.BadRequest(
+			c,
+			"Referenced resource is unavailable",
+			nil,
+		)
+
+	case errors.Is(err, ErrCanaryFileCodeExists),
+		errors.Is(err, ErrCanaryFilePathExists),
+		errors.Is(err, ErrCanaryTrackingIdentifierExists):
+		response.Error(
+			c,
+			http.StatusConflict,
+			"Canary file already exists",
+			nil,
+		)
+
+	case errors.Is(err, context.Canceled),
+		errors.Is(err, context.DeadlineExceeded):
+		response.Error(
+			c,
+			http.StatusRequestTimeout,
+			"Canary file import timed out",
+			nil,
+		)
+
+	default:
+		_ = c.Error(err)
+
+		response.InternalServerError(
+			c,
+			"Failed to import canary file",
+			nil,
+		)
+	}
 }
 
 func handleCreateCanaryFileError(

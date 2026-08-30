@@ -526,6 +526,7 @@ func (r *Repository) loadLatestTrustJobState(
 		organizationID,
 		mediaAssetID,
 		JobTypeDeepfakeImage,
+		JobTypeSyntheticImage,
 		JobTypeDeepfakeVideo,
 		JobTypeDeepfakeAudio,
 		JobTypeImageForensics,

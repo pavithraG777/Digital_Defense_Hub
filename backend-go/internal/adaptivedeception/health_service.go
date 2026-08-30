@@ -601,8 +601,8 @@ func addOptionalSnapshotMetadata(
 	}
 
 	if snapshot.DeployedDeviceName != nil {
-		metadata["deployed_device_identifier"] =
-			*snapshot.DeployedDeviceIdentifier
+		metadata["deployed_device_name"] =
+			*snapshot.DeployedDeviceName
 	}
 
 	if snapshot.DeployedDeviceIdentifier != nil {

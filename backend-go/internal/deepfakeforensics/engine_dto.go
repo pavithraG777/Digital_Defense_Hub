@@ -68,9 +68,10 @@ type MediaEngineResponse struct {
 	Success bool   `json:"success"`
 	Runtime string `json:"runtime,omitempty"`
 
-	DeepfakeAssessment  *EngineDeepfakeAssessment  `json:"deepfake_assessment,omitempty"`
-	ForensicsAssessment *EngineForensicsAssessment `json:"forensics_assessment,omitempty"`
-	OCRAssessment       *EngineOCRAssessment       `json:"ocr_assessment,omitempty"`
+	DeepfakeAssessment    *EngineDeepfakeAssessment    `json:"deepfake_assessment,omitempty"`
+	ForensicsAssessment   *EngineForensicsAssessment   `json:"forensics_assessment,omitempty"`
+	OCRAssessment         *EngineOCRAssessment         `json:"ocr_assessment,omitempty"`
+	ConsistencyAssessment *EngineConsistencyAssessment `json:"consistency_assessment,omitempty"`
 
 	ProcessingDurationMS int64    `json:"processing_duration_ms"`
 	Warnings             []string `json:"warnings"`
@@ -79,6 +80,20 @@ type MediaEngineResponse struct {
 	ErrorMessage *string `json:"error_message,omitempty"`
 
 	ProcessedAt time.Time `json:"processed_at"`
+}
+
+type EngineConsistencyAssessment struct {
+	MediaType         string  `json:"media_type"`
+	ConsistencyResult string  `json:"consistency_result"`
+	ConfidenceScore   float64 `json:"confidence_score"`
+
+	Signals []EngineAnalysisSignal `json:"signals"`
+
+	FeatureData map[string]any `json:"feature_data"`
+
+	SuspiciousRegions []EngineSuspiciousRegion `json:"suspicious_regions"`
+
+	VisualizationFilePath *string `json:"visualization_file_path,omitempty"`
 }
 
 type EngineAnalysisSignal struct {

@@ -33,7 +33,7 @@ async def train_image_classification(engine_request: ImageTrainingRequest, respo
     except Exception:
         logger.exception("Image model training failed", extra={"training_job_id": str(engine_request.training_job_id)})
         return _failure(engine_request, "MODEL_TRAINING_FAILED", "Image model training failed")
-    return ImageTrainingResponse(request_id=engine_request.request_id, training_job_id=engine_request.training_job_id, organization_id=engine_request.organization_id, success=True, artifact_path=result.artifact_path, artifact_sha256=result.artifact_sha256, artifact_format="PTH", training_record_count=result.training_record_count, validation_record_count=result.validation_record_count, metrics=result.metrics)
+    return ImageTrainingResponse(request_id=engine_request.request_id, training_job_id=engine_request.training_job_id, organization_id=engine_request.organization_id, success=True, artifact_path=result.artifact_path, artifact_sha256=result.artifact_sha256, artifact_format="PTH", training_record_count=result.training_record_count, validation_record_count=result.validation_record_count, test_record_count=result.test_record_count, metrics=result.metrics)
 
 def _failure(request: ImageTrainingRequest, code: str, message: str) -> ImageTrainingResponse:
     return ImageTrainingResponse(request_id=request.request_id, training_job_id=request.training_job_id, organization_id=request.organization_id, success=False, error_code=code, error_message=message, processed_at=datetime.now(timezone.utc))

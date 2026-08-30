@@ -50,6 +50,8 @@ ai-service-python/__pycache__/
 Thumbs.db
 # Private, user-supplied camera originals must never be committed.
 data/private-training/
+backend-go/.codex-go-cache/
+runtime-logs/
 
 # Prepared training corpora and downloaded public datasets are local artifacts.
 datasets/unified-manipulation-detection-v5-12000/

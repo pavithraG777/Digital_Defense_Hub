@@ -1,0 +1,14 @@
+{
+  "name": "digital-defense-hub",
+  "private": true,
+  "scripts": {
+    "install": "npm run frontend:install",
+    "dev": "npm run frontend:dev",
+    "build": "npm run frontend:build",
+    "typecheck": "npm run frontend:typecheck",
+    "frontend:install": "cd frontend-react && npm install",
+    "frontend:dev": "cd frontend-react && npm run dev",
+    "frontend:build": "cd frontend-react && npm run build",
+    "frontend:typecheck": "cd frontend-react && npm run typecheck"
+  }
+}

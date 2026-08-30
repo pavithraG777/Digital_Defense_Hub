@@ -132,6 +132,8 @@ type GetFileEventResponse struct {
 // ListFileEventsRequest contains tenant-isolated event filters.
 type ListFileEventsRequest struct {
 	DepartmentID *string `form:"department_id" binding:"omitempty,uuid"`
+	HoneytokenID *string `form:"honeytoken_id" binding:"omitempty,uuid"`
+	CanaryFileID *string `form:"canary_file_id" binding:"omitempty,uuid"`
 
 	SourceType string `form:"source_type" binding:"omitempty,oneof=PROTECTED_FILE HONEYTOKEN CANARY_FILE UNMANAGED_FILE"`
 	EventType  string `form:"event_type" binding:"omitempty,oneof=CREATED OPENED READ COPIED MOVED RENAMED MODIFIED ENCRYPTED DELETED EXTENSION_CHANGED PERMISSION_CHANGED HASH_CHANGED MULTIPLE_FILE_CHANGES CUSTOM"`

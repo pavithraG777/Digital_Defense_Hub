@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,9 +14,19 @@ import (
 
 const protectedFileStorageDirectory = "./storage/protected-files"
 
+type CanaryCreator interface {
+	CreateCanaryFile(
+		ctx context.Context,
+		organizationID uuid.UUID,
+		createdBy uuid.UUID,
+		request CreateCanaryFileRequest,
+	) (*CreateCanaryFileResponse, error)
+}
+
 type Service struct {
 	repository     *Repository
 	encryptionKeys *EncryptionKeyService
+	canaryService  CanaryCreator
 }
 
 // NewProtectedFileService creates a protected-file service backed by
@@ -23,10 +34,12 @@ type Service struct {
 func NewProtectedFileService(
 	repository *Repository,
 	encryptionKeys *EncryptionKeyService,
+	canaryService CanaryCreator,
 ) *Service {
 	return &Service{
 		repository:     repository,
 		encryptionKeys: encryptionKeys,
+		canaryService:  canaryService,
 	}
 }
 
@@ -127,6 +140,14 @@ func (s *Service) RegisterProtectedFile(
 	}
 	defer resolvedKey.destroy()
 
+	retention := strings.ToUpper(strings.TrimSpace(req.OriginalRetentionPolicy))
+	if retention == "" {
+		req.OriginalRetentionPolicy = OriginalRetentionDelete
+	} else if retention != OriginalRetentionDelete && retention != OriginalRetentionKeep {
+		return nil, fmt.Errorf("unsupported original retention policy: %s", retention)
+	} else {
+		req.OriginalRetentionPolicy = retention
+	}
 	fileProtection, err := NewFileProtectionService(
 		resolvedKey.keyMaterial,
 		resolvedKey.id.String(),
@@ -196,6 +217,21 @@ func (s *Service) RegisterProtectedFile(
 		return nil, registrationError
 	}
 
+	if req.EnableCanary {
+		if err := s.createAutoCanaryFile(
+			ctx,
+			file,
+		); err != nil {
+			return nil, err
+		}
+	}
+
+	if req.OriginalRetentionPolicy == OriginalRetentionDelete {
+		if err := os.Remove(file.OriginalFilePath); err != nil {
+			return nil, fmt.Errorf("failed to delete plaintext original after encryption: %w", err)
+		}
+	}
+
 	return buildRegisterProtectedFileResponse(file), nil
 }
 
@@ -248,6 +284,68 @@ func (s *Service) validateDependencies() error {
 	}
 
 	return nil
+}
+
+func (s *Service) createAutoCanaryFile(
+	ctx context.Context,
+	file *ProtectedFile,
+) error {
+	if file == nil {
+		return fmt.Errorf("protected file is required")
+	}
+
+	if s == nil || s.canaryService == nil {
+		return fmt.Errorf(
+			"canary service is required for canary-enabled protected files",
+		)
+	}
+
+	if file.OrganizationID == uuid.Nil {
+		return fmt.Errorf("organization ID is required")
+	}
+
+	if file.OwnerUserID == uuid.Nil {
+		return fmt.Errorf("owner user ID is required")
+	}
+
+	fileName := "canary-" + filepath.Base(file.OriginalFilePath)
+	description := "Automatically generated canary file for protected file tracking"
+
+	request := CreateCanaryFileRequest{
+		DepartmentID:       stringPtrOrNil(file.DepartmentID),
+		OwnerUserID:        stringPtr(file.OwnerUserID.String()),
+		FileName:           fileName,
+		CanaryType:         CanaryTypeCustom,
+		Description:        &description,
+		ContainsHoneytoken: false,
+		HoneytokenID:       nil,
+		ExpiresAt:          nil,
+	}
+
+	_, err := s.canaryService.CreateCanaryFile(
+		ctx,
+		file.OrganizationID,
+		file.OwnerUserID,
+		request,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create auto canary file: %w", err)
+	}
+
+	return nil
+}
+
+func stringPtr(value string) *string {
+	return &value
+}
+
+func stringPtrOrNil(value *uuid.UUID) *string {
+	if value == nil {
+		return nil
+	}
+
+	str := value.String()
+	return &str
 }
 
 func validateServiceContext(
@@ -349,6 +447,7 @@ func isSupportedFileCategory(
 	switch category {
 	case FileCategoryCredentials,
 		FileCategoryFinancial,
+		FileCategoryPayroll,
 		FileCategoryEmployee,
 		FileCategoryCustomer,
 		FileCategoryMedical,
@@ -480,6 +579,11 @@ func buildRegisterProtectedFileResponse(
 }
 
 const protectedFileRestoreStorageDirectory = "./storage/restored-files"
+
+const (
+	OriginalRetentionDelete = "DELETE_AFTER_ENCRYPTION"
+	OriginalRetentionKeep   = "RETAIN_ORIGINAL"
+)
 
 var ErrProtectedFileNotRestorable = errors.New(
 	"protected file cannot be restored",

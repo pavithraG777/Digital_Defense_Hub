@@ -83,6 +83,9 @@ func ValidateSession(
 					"Authentication session is invalid",
 				)
 
+			case errors.Is(err, auth.ErrSessionMFAUnverified):
+				abortSessionRequest(c, "MFA verification is required")
+
 			default:
 				c.AbortWithStatusJSON(
 					http.StatusInternalServerError,

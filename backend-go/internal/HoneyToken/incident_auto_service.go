@@ -2,6 +2,7 @@ package honeytoken
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -180,13 +181,132 @@ func (s *IncidentAutomationService) CreateFromThreat(
 		return nil, err
 	}
 
+	// Preserve the triggering endpoint event as immutable incident evidence.
+	// This deliberately stores only forensic metadata and existing hashes; it
+	// never copies raw file content, paths, command lines, or watcher payloads.
+	// A vault object can be attached later by a privileged evidence workflow.
+	evidencePreserved := s.preserveTriggeringFileEvent(ctx, incident, threat)
+	if evidencePreserved {
+		incident.EvidencePreserved = true
+	}
+
 	response := buildIncidentResponse(incident)
+	reason = "eligible threat escalated to incident"
+	if evidencePreserved {
+		reason += " and triggering event evidence was preserved"
+	} else {
+		reason += "; triggering event evidence requires follow-up"
+	}
 
 	return &IncidentAutomationResult{
 		IncidentCreated: true,
 		Incident:        &response,
-		Reason:          "eligible threat escalated to incident",
+		Reason:          reason,
 	}, nil
+}
+
+// preserveTriggeringFileEvent adds an immutable metadata-only evidence record
+// for the file event that produced an automated incident. Failure is not
+// allowed to undo a successfully created critical incident; callers can use
+// the incident's EvidencePreserved flag to identify required follow-up.
+func (s *IncidentAutomationService) preserveTriggeringFileEvent(
+	ctx context.Context,
+	incident *Incident,
+	threat *Threat,
+) bool {
+	if s == nil || s.repository == nil || s.repository.db == nil ||
+		incident == nil || threat == nil || threat.PrimaryFileEventID == nil ||
+		*threat.PrimaryFileEventID == uuid.Nil {
+		return false
+	}
+
+	var event struct {
+		ID              uuid.UUID
+		EventCode       string
+		EventType       string
+		EventSource     string
+		DetectionMethod string
+		FileName        string
+		MimeType        *string
+		FileSizeAfter   *int64
+		CurrentHash     *string
+		EvidenceHash    *string
+		HashAlgorithm   string
+		OccurredAt      time.Time
+	}
+	err := s.repository.db.QueryRow(ctx, `
+		SELECT id, event_code, event_type, event_source, detection_method,
+		       file_name, mime_type, file_size_after, current_hash,
+		       evidence_hash, hash_algorithm, occurred_at
+		FROM file_events
+		WHERE id = $1 AND organization_id = $2`,
+		*threat.PrimaryFileEventID, incident.OrganizationID,
+	).Scan(
+		&event.ID, &event.EventCode, &event.EventType, &event.EventSource,
+		&event.DetectionMethod, &event.FileName, &event.MimeType,
+		&event.FileSizeAfter, &event.CurrentHash, &event.EvidenceHash,
+		&event.HashAlgorithm, &event.OccurredAt,
+	)
+	if err != nil {
+		return false
+	}
+
+	hash := event.EvidenceHash
+	if hash == nil || strings.TrimSpace(*hash) == "" {
+		hash = event.CurrentHash
+	}
+	hashAlgorithm := strings.ToUpper(strings.TrimSpace(event.HashAlgorithm))
+	integrityStatus := IncidentEvidenceIntegrityUnavailable
+	if hashAlgorithm == IncidentEvidenceHashAlgorithmSHA256 &&
+		hash != nil && len(strings.TrimSpace(*hash)) == 64 {
+		normalized := strings.ToLower(strings.TrimSpace(*hash))
+		hash = &normalized
+		integrityStatus = IncidentEvidenceIntegrityPending
+	} else {
+		hash = nil
+		hashAlgorithm = IncidentEvidenceHashAlgorithmSHA256
+	}
+
+	metadata, err := json.Marshal(map[string]any{
+		"automation":           "incident-triggering-file-event",
+		"event_code":           event.EventCode,
+		"event_type":           event.EventType,
+		"event_source":         event.EventSource,
+		"detection_method":     event.DetectionMethod,
+		"content_preserved":    false,
+		"vault_link_status":    "METADATA_ONLY",
+		"raw_content_excluded": true,
+	})
+	if err != nil {
+		return false
+	}
+	description := "Automatically preserved metadata for the endpoint event that triggered this incident. Raw content and paths are excluded."
+	evidenceID := uuid.New()
+	evidence := &IncidentEvidence{
+		ID:              evidenceID,
+		IncidentID:      incident.ID,
+		OrganizationID:  incident.OrganizationID,
+		EvidenceCode:    generateIncidentEvidenceCode(evidenceID, time.Now().UTC()),
+		EvidenceType:    IncidentEvidenceTypeFileEvent,
+		EvidenceName:    "Triggering file event: " + event.FileName,
+		Description:     &description,
+		ThreatID:        &threat.ID,
+		FileEventID:     &event.ID,
+		ProtectedFileID: threat.ProtectedFileID,
+		HoneytokenID:    threat.HoneytokenID,
+		CanaryFileID:    threat.CanaryFileID,
+		MimeType:        event.MimeType,
+		FileSizeBytes:   event.FileSizeAfter,
+		EvidenceHash:    hash,
+		HashAlgorithm:   hashAlgorithm,
+		IntegrityStatus: integrityStatus,
+		IsImmutable:     true,
+		CollectedAt:     event.OccurredAt.UTC(),
+		Metadata:        metadata,
+	}
+	// The automated service is not a user; the repository records a system
+	// timeline event with no impersonated actor.
+	return s.repository.CreateEvidence(ctx, evidence, uuid.Nil) == nil
 }
 
 func isThreatEligibleForIncident(

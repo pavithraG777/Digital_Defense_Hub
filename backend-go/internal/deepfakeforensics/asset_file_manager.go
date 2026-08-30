@@ -145,8 +145,9 @@ type StoredMediaFile struct {
 	MimeType      string
 	FileExtension string
 
-	FileSizeBytes int64
-	FileHash      string
+	FileSizeBytes  int64
+	FileHash       string
+	FileHashSHA512 string
 
 	IsEncrypted         bool
 	EncryptionAlgorithm *string

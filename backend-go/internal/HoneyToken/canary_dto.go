@@ -23,6 +23,20 @@ type CreateCanaryFileRequest struct {
 	ExpiresAt *string `json:"expires_at" binding:"omitempty"`
 }
 
+// ImportCanaryFileRequest contains the metadata supplied alongside a
+// multipart file upload. Imported files are copied byte-for-byte into the
+// tenant staging area; embedded honeytokens remain available only through
+// the generated-canary workflow because importing is intentionally passive.
+type ImportCanaryFileRequest struct {
+	DepartmentID *string `form:"department_id"`
+	PolicyID     *string `form:"policy_id"`
+	OwnerUserID  *string `form:"owner_user_id"`
+
+	CanaryType  string  `form:"canary_type"`
+	Description *string `form:"description"`
+	ExpiresAt   *string `form:"expires_at"`
+}
+
 // CreateCanaryFileResponse returns safe metadata about the generated file.
 type CreateCanaryFileResponse struct {
 	ID                 uuid.UUID  `json:"id"`
@@ -63,6 +77,7 @@ type GetCanaryFileResponse struct {
 
 	DeployedDeviceName       *string    `json:"deployed_device_name,omitempty"`
 	DeployedDeviceIdentifier *string    `json:"deployed_device_identifier,omitempty"`
+	DeployedFilePath         *string    `json:"deployed_file_path,omitempty"`
 	OwnerUserID              *uuid.UUID `json:"owner_user_id,omitempty"`
 
 	AccessCount     int        `json:"access_count"`
@@ -96,6 +111,7 @@ type ListCanaryFilesResponse struct {
 // DeployCanaryFileRequest selects the protected destination and device.
 type DeployCanaryFileRequest struct {
 	DeploymentDirectory string  `json:"deployment_directory" binding:"required,min=1,max=4096"`
+	OriginalFilePath    *string `json:"original_file_path,omitempty" binding:"omitempty,max=4096"`
 	DeviceName          *string `json:"device_name" binding:"omitempty,max=255"`
 	DeviceIdentifier    *string `json:"device_identifier" binding:"omitempty,max=255"`
 }
@@ -106,6 +122,13 @@ type DeployCanaryFileResponse struct {
 	FileName                 string    `json:"file_name"`
 	DeployedDeviceName       *string   `json:"deployed_device_name,omitempty"`
 	DeployedDeviceIdentifier *string   `json:"deployed_device_identifier,omitempty"`
+	DeployedFilePath         string    `json:"deployed_file_path"`
 	Status                   string    `json:"status"`
 	DeployedAt               time.Time `json:"deployed_at"`
+}
+
+// UpdateCanaryFileStatusRequest disarms a canary while preserving its
+// deployment and trigger history. Re-arming is an explicit deploy operation.
+type UpdateCanaryFileStatusRequest struct {
+	Status string `json:"status" binding:"required,oneof=INACTIVE"`
 }

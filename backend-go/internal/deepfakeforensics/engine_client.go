@@ -437,6 +437,7 @@ func jobSupportsMediaType(
 ) bool {
 	switch NormalizeConstant(jobType) {
 	case JobTypeDeepfakeImage,
+		JobTypeSyntheticImage,
 		JobTypeImageForensics:
 		return NormalizeConstant(mediaType) ==
 			MediaTypeImage
@@ -450,6 +451,10 @@ func jobSupportsMediaType(
 		JobTypeAudioForensics:
 		return NormalizeConstant(mediaType) ==
 			MediaTypeAudio
+
+	case JobTypeDocumentForensics:
+		return NormalizeConstant(mediaType) ==
+			MediaTypeDocument
 
 	case JobTypeOCRExtraction:
 		switch NormalizeConstant(mediaType) {
@@ -514,6 +519,9 @@ func validateSuccessfulEngineResponse(
 	if response.OCRAssessment != nil {
 		assessmentCount++
 	}
+	if response.ConsistencyAssessment != nil {
+		assessmentCount++
+	}
 	if assessmentCount != 1 {
 		return fmt.Errorf(
 			"%w: exactly one assessment is required",
@@ -522,7 +530,7 @@ func validateSuccessfulEngineResponse(
 	}
 
 	switch {
-	case IsDeepfakeJobType(jobType):
+	case IsDeepfakeAssessmentJobType(jobType):
 		if response.DeepfakeAssessment == nil {
 			return fmt.Errorf(
 				"%w: deepfake assessment is missing",
@@ -554,6 +562,19 @@ func validateSuccessfulEngineResponse(
 		}
 		return validateOCRAssessment(
 			response.OCRAssessment,
+		)
+
+	case NormalizeConstant(jobType) == JobTypeAudioVisualConsistency,
+		NormalizeConstant(jobType) == JobTypeLipSyncConsistency,
+		NormalizeConstant(jobType) == JobTypeMetadataIntegrity:
+		if response.ConsistencyAssessment == nil {
+			return fmt.Errorf(
+				"%w: consistency assessment is missing",
+				ErrInvalidMediaEngineResponse,
+			)
+		}
+		return validateConsistencyAssessment(
+			response.ConsistencyAssessment,
 		)
 	}
 
@@ -612,6 +633,29 @@ func validateDeepfakeAssessment(
 	)
 	assessment.DetectionResult = NormalizeConstant(
 		assessment.DetectionResult,
+	)
+
+	return nil
+}
+
+func validateConsistencyAssessment(
+	assessment *EngineConsistencyAssessment,
+) error {
+	if assessment == nil ||
+		!IsSupportedMediaType(assessment.MediaType) ||
+		strings.TrimSpace(assessment.ConsistencyResult) == "" ||
+		!validScore(assessment.ConfidenceScore) {
+		return fmt.Errorf(
+			"%w: invalid consistency assessment",
+			ErrInvalidMediaEngineResponse,
+		)
+	}
+
+	assessment.MediaType = NormalizeConstant(
+		assessment.MediaType,
+	)
+	assessment.ConsistencyResult = NormalizeConstant(
+		assessment.ConsistencyResult,
 	)
 
 	return nil

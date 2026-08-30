@@ -642,14 +642,21 @@ func validateModelArtifactExtension(filename string) error {
 
 func inferModelIO(modelType string) (string, string) {
 	switch NormalizeConstant(modelType) {
-	case JobTypeDeepfakeImage:
+	case JobTypeDeepfakeImage,
+		JobTypeSyntheticImage:
 		return "IMAGE", "CLASSIFICATION"
 	case JobTypeDeepfakeVideo:
 		return "VIDEO", "CLASSIFICATION"
 	case JobTypeDeepfakeAudio:
 		return "AUDIO", "CLASSIFICATION"
+	case JobTypeDocumentForensics:
+		return "DOCUMENT", "CLASSIFICATION"
 	case JobTypeOCRExtraction:
 		return "DOCUMENT", "TEXT_EXTRACTION"
+	case JobTypeAudioVisualConsistency,
+		JobTypeLipSyncConsistency,
+		JobTypeMetadataIntegrity:
+		return "VIDEO", "CONSISTENCY"
 	default:
 		return "IMAGE", "CLASSIFICATION"
 	}
@@ -838,11 +845,13 @@ func (r *Repository) ListManagedAIModels(
 		"deleted_at IS NULL",
 		`model_type IN (
 			'DEEPFAKE_IMAGE_DETECTION',
+			'AI_GENERATED_IMAGE_DETECTION',
 			'DEEPFAKE_VIDEO_DETECTION',
 			'DEEPFAKE_AUDIO_DETECTION',
 			'IMAGE_FORENSICS',
 			'VIDEO_FORENSICS',
 			'AUDIO_FORENSICS',
+			'DOCUMENT_FORENSICS',
 			'OCR_EXTRACTION'
 		)`,
 	}

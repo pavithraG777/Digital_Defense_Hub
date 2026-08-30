@@ -14,6 +14,7 @@ import torch
 from app.media_forensics_runtime import (
     MediaForensicsRuntime,
     MediaRuntimeError,
+    get_media_runtime,
 )
 from app.media_forensics_schemas import (
     ModelExecutionSpecification,
@@ -35,14 +36,14 @@ class ModelInferenceResult:
 class MediaModelRunner:
     def __init__(
         self,
-        runtime: MediaForensicsRuntime,
+        runtime: MediaForensicsRuntime | None = None,
     ) -> None:
-        self.runtime = runtime
+        # Analyzers can be used directly as well as through the application
+        # service.  Use the application's singleton runtime in the direct
+        # case so model-file validation is always available.
+        self.runtime = runtime or get_media_runtime()
 
-        self._pytorch_models: dict[
-            str,
-            Any,
-        ] = {}
+        self._pytorch_models: dict[str, Any] = {}
         self._onnx_sessions: dict[
             str,
             onnxruntime.InferenceSession,
@@ -60,8 +61,12 @@ class MediaModelRunner:
                 "model input image is empty"
             )
 
-        input_array = self._preprocess_image(
+        prepared_image = self._prepare_image_region(
             image,
+            model.configuration,
+        )
+        input_array = self._preprocess_image(
+            prepared_image,
             model.configuration,
         )
 
@@ -69,6 +74,89 @@ class MediaModelRunner:
             model,
             input_array,
         )
+
+    @staticmethod
+    def _prepare_image_region(
+        image: np.ndarray,
+        configuration: dict[str, Any],
+    ) -> np.ndarray:
+        preprocessing = str(
+            configuration.get("preprocessing", "")
+        ).strip().upper()
+        if preprocessing not in {
+            "FACE_CONTEXT_CROP_V1",
+            "EARLY_WINDOW_FACE_CONTEXT_CROP_V2",
+        }:
+            return image
+
+        context_scale = float(
+            configuration.get("context_scale", 2.35)
+        )
+        if not 1.25 <= context_scale <= 4.0:
+            raise MediaRuntimeError(
+                "face-context scale is invalid"
+            )
+
+        grayscale = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        cascade_name = "haarcascade_frontalface_default.xml"
+        cascade_candidates = [
+            Path(cv2.data.haarcascades) / cascade_name,
+            Path(__file__).resolve().parents[1]
+            / "models"
+            / "opencv"
+            / "haarcascades"
+            / cascade_name,
+        ]
+        cascade_path = next(
+            (path for path in cascade_candidates if path.is_file()),
+            cascade_candidates[0],
+        )
+        detector = cv2.CascadeClassifier(str(cascade_path))
+        if detector.empty():
+            raise MediaRuntimeError(
+                "face-context detector is unavailable"
+            )
+        minimum = max(32, min(image.shape[:2]) // 12)
+        faces = detector.detectMultiScale(
+            grayscale,
+            scaleFactor=1.08,
+            minNeighbors=5,
+            minSize=(minimum, minimum),
+            flags=cv2.CASCADE_SCALE_IMAGE,
+        )
+        face = None
+        if len(faces) > 0:
+            face = max(
+                faces,
+                key=lambda item: int(item[2]) * int(item[3]),
+            )
+
+        height, width = image.shape[:2]
+        if face is None:
+            side = min(height, width)
+            center_x, center_y = width / 2, height / 2
+        else:
+            x, y, face_width, face_height = (
+                int(value) for value in face
+            )
+            side = min(
+                max(face_width, face_height) * context_scale,
+                width,
+                height,
+            )
+            center_x = x + face_width / 2
+            center_y = y + face_height * 0.58
+
+        side = max(1, int(round(side)))
+        left = max(
+            0,
+            min(width - side, int(round(center_x - side / 2))),
+        )
+        top = max(
+            0,
+            min(height - side, int(round(center_y - side / 2))),
+        )
+        return image[top : top + side, left : left + side]
 
     def run_tensor(
         self,
@@ -154,19 +242,10 @@ class MediaModelRunner:
             )
 
             if loaded_model is None:
-                try:
-                    loaded_model = torch.jit.load(
-                        str(model_path),
-                        map_location=(
-                            self.runtime.torch_device
-                        ),
-                    )
-                except Exception as error:
-                    raise MediaRuntimeError(
-                        "PyTorch model must be a "
-                        "verified TorchScript model"
-                    ) from error
-
+                loaded_model = self._load_pytorch_model(
+                    model_path,
+                )
+                loaded_model.to(self.runtime.torch_device)
                 loaded_model.eval()
 
                 self._pytorch_models[
@@ -193,6 +272,78 @@ class MediaModelRunner:
         return self._normalize_model_output(
             output,
         )
+
+    def _load_pytorch_model(self, model_path: Path) -> Any:
+        """Load either a verified TorchScript model or a DDH training artifact.
+
+        The training pipeline writes a state-dictionary checkpoint rather than
+        executable TorchScript.  Restrict checkpoint support to the documented
+        DDH architecture and use ``weights_only`` so uploaded model artifacts
+        cannot execute Python during deserialization.
+        """
+        try:
+            return torch.jit.load(
+                str(model_path),
+                map_location="cpu",
+            )
+        except Exception:
+            pass
+
+        try:
+            checkpoint = torch.load(
+                str(model_path),
+                map_location="cpu",
+                weights_only=True,
+            )
+        except Exception as error:
+            raise MediaRuntimeError(
+                "PyTorch model must be a verified TorchScript model "
+                "or DDH training checkpoint"
+            ) from error
+
+        if not isinstance(checkpoint, dict):
+            raise MediaRuntimeError(
+                "DDH training checkpoint must contain an object"
+            )
+        if checkpoint.get("format_version") != "1.0":
+            raise MediaRuntimeError(
+                "unsupported DDH training checkpoint format"
+            )
+        architecture = checkpoint.get("architecture")
+        if architecture not in {"ddh_cnn_v1", "mobilenet_v3_small_forensics_v1"}:
+            raise MediaRuntimeError(
+                "unsupported DDH training checkpoint architecture"
+            )
+        if checkpoint.get("classes") != ["authentic", "deepfake"]:
+            raise MediaRuntimeError(
+                "DDH training checkpoint classes are invalid"
+            )
+
+        state_dict = checkpoint.get("state_dict")
+        if not isinstance(state_dict, dict):
+            raise MediaRuntimeError(
+                "DDH training checkpoint state dictionary is missing"
+            )
+
+        from torch import nn
+
+        if architecture == "ddh_cnn_v1":
+            model = nn.Sequential(
+                nn.Conv2d(3, 16, kernel_size=3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+                nn.Conv2d(16, 32, kernel_size=3, padding=1), nn.ReLU(),
+                nn.AdaptiveAvgPool2d((1, 1)), nn.Flatten(), nn.Linear(32, 2),
+            )
+        else:
+            from torchvision.models import mobilenet_v3_small
+            model = mobilenet_v3_small(weights=None)
+            model.classifier[-1] = nn.Linear(model.classifier[-1].in_features, 2)
+        try:
+            model.load_state_dict(state_dict, strict=True)
+        except Exception as error:
+            raise MediaRuntimeError(
+                "DDH training checkpoint weights are invalid"
+            ) from error
+        return model
 
     def _run_onnx(
         self,

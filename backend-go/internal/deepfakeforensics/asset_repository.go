@@ -59,6 +59,10 @@ func (r *Repository) CreateMediaAsset(
 	if metadata == nil {
 		metadata = map[string]any{}
 	}
+	if evidencePackage, ok := metadata["evidence_package"].(map[string]any); ok {
+		evidencePackage["evidence_uuid"] = assetID.String()
+		evidencePackage["packaged_at"] = now.Format(time.RFC3339Nano)
+	}
 
 	metadataJSON, err := json.Marshal(metadata)
 	if err != nil {
@@ -251,6 +255,41 @@ func (r *Repository) GetMediaAsset(
 		)
 	}
 
+	return asset, nil
+}
+
+// FindMediaAssetByHash returns the most recent existing asset with identical
+// original bytes in the same organization. It is used for evidence intake
+// correlation; it deliberately does not deduplicate across tenants.
+func (r *Repository) FindMediaAssetByHash(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	sha256Hash string,
+) (*MediaAnalysisAsset, error) {
+	if err := r.validateAvailable(); err != nil {
+		return nil, err
+	}
+	if ctx == nil || organizationID == uuid.Nil || len(strings.TrimSpace(sha256Hash)) != 64 {
+		return nil, ErrInvalidRepositoryInput
+	}
+
+	asset, err := scanMediaAnalysisAsset(r.databasePool.QueryRow(ctx, `
+		SELECT id, asset_sequence, asset_code, organization_id, department_id,
+			incident_id, evidence_id, evidence_file_id, original_file_name,
+			stored_file_name, storage_path, media_type, mime_type, file_extension,
+			file_size_bytes, file_hash, hash_algorithm, is_encrypted,
+			encryption_algorithm, source_type, status, uploaded_by, metadata,
+			uploaded_at, analyzed_at, created_at, updated_at, deleted_at
+		FROM media_analysis_assets
+		WHERE organization_id = $1 AND file_hash = $2 AND deleted_at IS NULL
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1`, organizationID, strings.ToLower(strings.TrimSpace(sha256Hash))))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find duplicate media asset: %w", err)
+	}
 	return asset, nil
 }
 

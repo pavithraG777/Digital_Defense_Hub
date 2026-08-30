@@ -913,6 +913,25 @@ func (s *HoneytokenService) DeployHoneytoken(
 	), nil
 }
 
+// DeactivateHoneytoken disarms an active decoy without removing its evidence.
+func (s *HoneytokenService) DeactivateHoneytoken(ctx context.Context, organizationID, honeytokenID uuid.UUID) (*GetHoneytokenResponse, error) {
+	if err := s.validate(); err != nil {
+		return nil, err
+	}
+	if err := validateHoneytokenServiceContext(ctx); err != nil {
+		return nil, err
+	}
+	if organizationID == uuid.Nil || honeytokenID == uuid.Nil {
+		return nil, fmt.Errorf("organization ID and honeytoken ID are required")
+	}
+	token, err := s.repository.DeactivateHoneytoken(ctx, organizationID, honeytokenID)
+	if err != nil {
+		return nil, err
+	}
+	result := buildGetHoneytokenResponse(token)
+	return result, nil
+}
+
 // ValidateHoneytoken checks an observed value and records a trigger
 // only when the value matches an ACTIVE or already TRIGGERED token.
 func (s *HoneytokenService) ValidateHoneytoken(

@@ -37,6 +37,10 @@ func Created(c *gin.Context, message string, data interface{}) {
 	Success(c, http.StatusCreated, message, data)
 }
 
+func Accepted(c *gin.Context, message string, data interface{}) {
+	Success(c, http.StatusAccepted, message, data)
+}
+
 func BadRequest(c *gin.Context, message string, err interface{}) {
 	Error(c, http.StatusBadRequest, message, err)
 }

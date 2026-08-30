@@ -129,6 +129,12 @@ type DeployHoneytokenResponse struct {
 	DeployedAt           string `json:"deployed_at"`
 }
 
+// UpdateHoneytokenStatusRequest supports the deliberately narrow lifecycle
+// transition used to disarm a deployed decoy without deleting its evidence.
+type UpdateHoneytokenStatusRequest struct {
+	Status string `json:"status" binding:"required,oneof=INACTIVE"`
+}
+
 // ValidateHoneytokenRequest contains a value observed by a monitoring
 // agent or detection service.
 type ValidateHoneytokenRequest struct {

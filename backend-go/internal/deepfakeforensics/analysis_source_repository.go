@@ -66,8 +66,7 @@ func (r *Repository) LoadAnalysisSource(
 		)
 	}
 
-	if NormalizeConstant(model.ModelType) !=
-		NormalizeConstant(job.JobType) {
+	if !analysisModelMatchesJob(*model, job.JobType) {
 		return nil, fmt.Errorf(
 			"%w: assigned model type does not match job type",
 			ErrInvalidRepositoryInput,
@@ -79,6 +78,25 @@ func (r *Repository) LoadAnalysisSource(
 		Model: *model,
 		Job:   *job,
 	}, nil
+}
+
+// analysisModelMatchesJob supports detector-scope specialization while
+// retaining compatibility with synthetic-image models historically stored
+// under the broader DEEPFAKE_IMAGE_DETECTION model type.
+func analysisModelMatchesJob(
+	model AnalysisModelReference,
+	jobType string,
+) bool {
+	normalizedJobType := NormalizeConstant(jobType)
+	if rawScope, exists := model.Configuration["detector_scope"]; exists && rawScope != nil {
+		if configuredScope := NormalizeConstant(
+			fmt.Sprint(rawScope),
+		); configuredScope != "" {
+			return configuredScope == normalizedJobType
+		}
+	}
+
+	return NormalizeConstant(model.ModelType) == normalizedJobType
 }
 
 func (r *Repository) getProcessingAnalysisJob(

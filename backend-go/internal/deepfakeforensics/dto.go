@@ -156,3 +156,29 @@ type AnalysisJobListResponse struct {
 	PageSize   int   `json:"page_size"`
 	TotalPages int   `json:"total_pages"`
 }
+
+// MediaForensicReportListResponse exposes report metadata for the current
+// organization. The report body remains available only from the individual
+// report endpoint.
+type MediaForensicReportListResponse struct {
+	Items []MediaForensicReportSummary `json:"items"`
+
+	Total      int64 `json:"total"`
+	Page       int   `json:"page"`
+	PageSize   int   `json:"page_size"`
+	TotalPages int   `json:"total_pages"`
+}
+
+// MediaForensicReportSummary is intentionally metadata-only. Full findings,
+// including any OCR-derived text, are returned only after the analyst opens a
+// specific organization-scoped report.
+type MediaForensicReportSummary struct {
+	ID             uuid.UUID  `json:"id"`
+	MediaAssetID   uuid.UUID  `json:"media_asset_id"`
+	IncidentID     *uuid.UUID `json:"incident_id,omitempty"`
+	ReportNumber   string     `json:"report_number"`
+	Status         string     `json:"status"`
+	DocumentSHA256 string     `json:"document_sha256"`
+	GeneratedAt    time.Time  `json:"generated_at"`
+	ApprovedAt     *time.Time `json:"approved_at,omitempty"`
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -52,18 +53,15 @@ func Middleware(
 			),
 		)
 
-		fmt.Println("================================")
-		fmt.Println("AUDIT MIDDLEWARE")
-		fmt.Println("IP:", c.ClientIP())
-		fmt.Println("Device:", deviceName)
-		fmt.Println("UserAgent:", c.Request.UserAgent())
-		fmt.Println("================================")
-
 		c.Request = c.Request.WithContext(
 			requestContext,
 		)
 
 		c.Next()
+
+		if !shouldAuditRequest(c) {
+			return
+		}
 
 		routePath := c.FullPath()
 
@@ -122,10 +120,12 @@ func Middleware(
 		)
 
 		metadata := map[string]any{
-			"http_method":     c.Request.Method,
-			"request_path":    c.Request.URL.Path,
-			"route_path":      routePath,
-			"query_string":    c.Request.URL.RawQuery,
+			"http_method":  c.Request.Method,
+			"request_path": c.Request.URL.Path,
+			"route_path":   routePath,
+			"query_string": sanitizeQueryString(
+				c.Request.URL.Query(),
+			),
 			"response_status": statusCode,
 			"duration_ms": time.Since(
 				startedAt,
@@ -193,6 +193,43 @@ func Middleware(
 			auditEntry,
 		)
 	}
+}
+
+func shouldAuditRequest(c *gin.Context) bool {
+	if c == nil || c.Request == nil || c.Request.URL == nil {
+		return false
+	}
+
+	// Health probes can run every few seconds and do not represent a user or
+	// security action. Excluding only these exact endpoints prevents audit-log
+	// amplification while every public and protected business route remains
+	// covered.
+	switch strings.TrimSuffix(c.Request.URL.Path, "/") {
+	case "/api/v1/health", "/api/v1/ready", "/api/v1/metrics":
+		return false
+	default:
+		return true
+	}
+}
+
+func sanitizeQueryString(values url.Values) string {
+	if len(values) == 0 {
+		return ""
+	}
+
+	sanitized := make(url.Values, len(values))
+	for key, items := range values {
+		if isSensitiveKey(key) {
+			sanitized.Set(key, "[REDACTED]")
+			continue
+		}
+
+		for _, item := range items {
+			sanitized.Add(key, item)
+		}
+	}
+
+	return sanitized.Encode()
 }
 
 func getContextUUID(

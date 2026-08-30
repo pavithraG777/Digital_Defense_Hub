@@ -43,6 +43,7 @@ type ThreatWorker struct {
 	logger                        *zap.Logger
 	queue                         chan ThreatSignal
 	incidentAutomation            *IncidentAutomationService
+	attackStoryPublisher          AttackStoryPublisher
 	securityNotificationPublisher SecurityNotificationPublisher
 
 	workerCount int
@@ -133,6 +134,21 @@ func (w *ThreatWorker) SetSecurityNotificationPublisher(
 	defer w.mu.Unlock()
 
 	w.securityNotificationPublisher = publisher
+}
+
+// SetAttackStoryPublisher connects correlated threat activity to the
+// organization attack-story timeline without adding a package dependency.
+func (w *ThreatWorker) SetAttackStoryPublisher(
+	publisher AttackStoryPublisher,
+) {
+	if w == nil {
+		return
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.attackStoryPublisher = publisher
 }
 
 // Start launches the configured threat-processing goroutines.
@@ -559,6 +575,7 @@ func (w *ThreatWorker) processSignal(
 			processingContext,
 			result.Threat,
 			result.ThreatCreated,
+			signal.FileEventID,
 		); notificationErr != nil {
 		w.logger.Error(
 			"Threat notification publication failed",
@@ -575,6 +592,19 @@ func (w *ThreatWorker) processSignal(
 				result.Threat.ID,
 			),
 			zap.Error(notificationErr),
+		)
+	}
+
+	if storyErr := w.publishAttackStoryActivity(
+		processingContext,
+		result.Threat,
+		signal,
+	); storyErr != nil {
+		w.logger.Error(
+			"Attack story activity publication failed",
+			zap.String("file_event_id", signal.FileEventID.String()),
+			zap.String("threat_id", result.Threat.ID),
+			zap.Error(storyErr),
 		)
 	}
 

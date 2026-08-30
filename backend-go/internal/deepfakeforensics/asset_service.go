@@ -138,6 +138,25 @@ func (s *AssetService) UploadMediaAsset(
 		storedFile.MediaType
 	metadata["storage_encrypted"] =
 		storedFile.IsEncrypted
+	metadata["evidence_package"] =
+		buildEvidencePackageMetadata(storedFile)
+
+	duplicate, duplicateErr := s.repository.FindMediaAssetByHash(
+		ctx,
+		organizationID,
+		storedFile.FileHash,
+	)
+	if duplicateErr != nil {
+		_ = s.fileManager.Remove(storedFile.StoragePath)
+		return nil, duplicateErr
+	}
+	if duplicate != nil {
+		metadata["duplicate_media"] = map[string]any{
+			"detected":                true,
+			"matching_media_asset_id": duplicate.ID.String(),
+			"matching_sha256":         duplicate.FileHash,
+		}
+	}
 	if quarantined {
 		metadata["quarantined_at"] =
 			time.Now().UTC()
@@ -195,6 +214,24 @@ func (s *AssetService) UploadMediaAsset(
 		return nil, createErr
 	}
 
+	packageEventErr := s.repository.RecordMediaSecurityEvent(
+		ctx,
+		organizationID,
+		asset.ID,
+		&uploadedBy,
+		"EVIDENCE_PACKAGED",
+		"Secure acquisition evidence package initialized",
+		map[string]any{
+			"sha256":              storedFile.FileHash,
+			"sha512":              storedFile.FileHashSHA512,
+			"fingerprint_version": evidenceFingerprintAlgorithm,
+			"duplicate_detected":  duplicate != nil,
+		},
+	)
+	if packageEventErr != nil {
+		return asset, fmt.Errorf("record evidence package event: %w", packageEventErr)
+	}
+
 	if quarantined {
 		eventErr :=
 			s.repository.RecordMediaSecurityEvent(
@@ -220,6 +257,37 @@ func (s *AssetService) UploadMediaAsset(
 	}
 
 	return asset, nil
+}
+
+// PrepareMediaAssetPreview returns a short-lived, integrity-verified plaintext
+// image. The caller must always invoke Cleanup after streaming the response.
+func (s *AssetService) PrepareMediaAssetPreview(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	mediaAssetID uuid.UUID,
+) (*MediaAnalysisAsset, *PreparedMediaSource, error) {
+	if !s.isAvailable() || ctx == nil || organizationID == uuid.Nil || mediaAssetID == uuid.Nil {
+		return nil, nil, ErrInvalidMediaUpload
+	}
+
+	asset, err := s.repository.GetMediaAsset(ctx, organizationID, mediaAssetID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if NormalizeConstant(asset.Status) != mediaAssetStatusAvailable || NormalizeConstant(asset.MediaType) != "IMAGE" {
+		return nil, nil, ErrMediaAssetConflict
+	}
+	switch normalizeMimeType(asset.MimeType) {
+	case "image/jpeg", "image/png", "image/webp":
+	default:
+		return nil, nil, ErrMediaAssetConflict
+	}
+
+	prepared, err := s.fileManager.PrepareAnalysisSource(ctx, *asset, uuid.New())
+	if err != nil {
+		return nil, nil, err
+	}
+	return asset, prepared, nil
 }
 
 func (s *AssetService) isAvailable() bool {

@@ -8,7 +8,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/auth"
-	"github.com/pavithraG777/cyber-security-platform/backend/internal/response"
 )
 
 const (
@@ -23,13 +22,7 @@ func Authenticate(jwtManager *auth.JWTManager) gin.HandlerFunc {
 		)
 
 		if authorizationHeader == "" {
-			response.Error(
-				c,
-				http.StatusUnauthorized,
-				"Authorization header is required",
-				nil,
-			)
-			c.Abort()
+			abortWithError(c, http.StatusUnauthorized, "Authorization header is required", nil)
 			return
 		}
 
@@ -37,13 +30,7 @@ func Authenticate(jwtManager *auth.JWTManager) gin.HandlerFunc {
 			authorizationHeader,
 			BearerPrefix,
 		) {
-			response.Error(
-				c,
-				http.StatusUnauthorized,
-				"Authorization header must use Bearer token",
-				nil,
-			)
-			c.Abort()
+			abortWithError(c, http.StatusUnauthorized, "Authorization header must use Bearer token", nil)
 			return
 		}
 
@@ -55,13 +42,7 @@ func Authenticate(jwtManager *auth.JWTManager) gin.HandlerFunc {
 		)
 
 		if tokenString == "" {
-			response.Error(
-				c,
-				http.StatusUnauthorized,
-				"Access token is required",
-				nil,
-			)
-			c.Abort()
+			abortWithError(c, http.StatusUnauthorized, "Access token is required", nil)
 			return
 		}
 
@@ -69,14 +50,7 @@ func Authenticate(jwtManager *auth.JWTManager) gin.HandlerFunc {
 		if err != nil {
 			fmt.Println("JWT validation error:", err)
 
-			response.Error(
-				c,
-				http.StatusUnauthorized,
-				"Invalid or expired access token",
-				err.Error(),
-			)
-
-			c.Abort()
+			abortWithError(c, http.StatusUnauthorized, "Invalid or expired access token", err.Error())
 			return
 		}
 

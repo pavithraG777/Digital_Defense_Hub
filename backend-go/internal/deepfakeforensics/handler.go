@@ -11,30 +11,78 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/response"
 )
 
 // Handler exposes authenticated organization-scoped media
 // upload, analysis job and result endpoints.
+type queryServiceProvider interface {
+	GetMediaAsset(
+		ctx context.Context,
+		organizationID uuid.UUID,
+		mediaAssetID uuid.UUID,
+	) (*MediaAnalysisAsset, error)
+
+	ListMediaAssets(
+		ctx context.Context,
+		organizationID uuid.UUID,
+		filter MediaAssetListFilter,
+	) (*MediaAssetListResponse, error)
+
+	GetAnalysisJob(
+		ctx context.Context,
+		organizationID uuid.UUID,
+		analysisJobID uuid.UUID,
+	) (*AIAnalysisJob, error)
+
+	ListAnalysisJobs(
+		ctx context.Context,
+		organizationID uuid.UUID,
+		filter AnalysisJobListFilter,
+	) (*AnalysisJobListResponse, error)
+
+	GetAnalysisResult(
+		ctx context.Context,
+		organizationID uuid.UUID,
+		analysisJobID uuid.UUID,
+	) (*AnalysisResultBundle, error)
+
+	isAvailable() bool
+}
+
 type Handler struct {
 	assetService    *AssetService
 	analysisService *AnalysisService
-	queryService    *QueryService
+	queryService    queryServiceProvider
 	trustService    *TrustService
 	modelService    *ModelManagementService
 	reportService   *ForensicReportService
 	trainingService *TrainingService
+	policyService   *OrganizationMediaPolicyService
+	engineClient    *EngineClient
+	reviewDB        *pgxpool.Pool
+}
+
+// SetReviewDB enables the persisted analyst-review workflow without changing
+// the stable constructor used by existing integrations and tests.
+func (h *Handler) SetReviewDB(db *pgxpool.Pool) {
+	if h != nil {
+		h.reviewDB = db
+	}
 }
 
 func NewHandler(
 	assetService *AssetService,
 	analysisService *AnalysisService,
-	queryService *QueryService,
+	queryService queryServiceProvider,
 	trustService *TrustService,
 	modelService *ModelManagementService,
 	reportService *ForensicReportService,
 	trainingService *TrainingService,
+	policyService *OrganizationMediaPolicyService,
+	engineClient *EngineClient,
 ) (*Handler, error) {
 	if assetService == nil ||
 		!assetService.isAvailable() ||
@@ -48,7 +96,8 @@ func NewHandler(
 		!modelService.isAvailable() ||
 		reportService == nil ||
 		trainingService == nil ||
-		!trainingService.isAvailable() {
+		!trainingService.isAvailable() ||
+		policyService == nil {
 		return nil, errors.New(
 			"deepfake forensics handler dependencies are unavailable",
 		)
@@ -62,6 +111,8 @@ func NewHandler(
 		modelService:    modelService,
 		reportService:   reportService,
 		trainingService: trainingService,
+		policyService:   policyService,
+		engineClient:    engineClient,
 	}, nil
 }
 
@@ -91,6 +142,27 @@ func (h *Handler) UploadMediaAsset(
 			c,
 			"Media file is empty",
 			nil,
+		)
+		return
+	}
+	if err := h.policyService.ValidateUpload(
+		c.Request.Context(),
+		organizationID,
+		fileHeader.Filename,
+		fileHeader.Size,
+	); err != nil {
+		if errors.Is(err, ErrMediaPolicyViolation) {
+			response.BadRequest(
+				c,
+				"Media file is not permitted by the organization policy",
+				err.Error(),
+			)
+			return
+		}
+		handleMediaAPIError(
+			c,
+			err,
+			"Unable to validate organization media policy",
 		)
 		return
 	}
@@ -215,6 +287,38 @@ func (h *Handler) GetMediaAsset(
 	)
 }
 
+// PreviewMediaAsset streams an authenticated, tenant-scoped and
+// integrity-verified image without exposing its managed storage path.
+func (h *Handler) PreviewMediaAsset(c *gin.Context) {
+	organizationID, _, ok := h.authenticatedIdentity(c)
+	if !ok {
+		return
+	}
+	mediaAssetID, ok := handlerPathUUID(c, "media_asset_id")
+	if !ok {
+		response.BadRequest(c, "Invalid media asset ID", nil)
+		return
+	}
+
+	asset, prepared, err := h.assetService.PrepareMediaAssetPreview(
+		c.Request.Context(), organizationID, mediaAssetID,
+	)
+	if err != nil {
+		handleMediaAPIError(c, err, "Unable to preview media asset")
+		return
+	}
+	if prepared.Cleanup != nil {
+		defer prepared.Cleanup()
+	}
+
+	c.Header("Content-Type", normalizeMimeType(asset.MimeType))
+	c.Header("Content-Disposition", fmt.Sprintf("inline; filename=%q", asset.OriginalFileName))
+	c.Header("Cache-Control", "private, no-store, max-age=0")
+	c.Header("Pragma", "no-cache")
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.File(prepared.Path)
+}
+
 func (h *Handler) ListMediaAssets(
 	c *gin.Context,
 ) {
@@ -300,6 +404,46 @@ func (h *Handler) ListMediaAssets(
 		c,
 		"Media assets retrieved successfully",
 		result,
+	)
+}
+
+func (h *Handler) GetEngineHealth(
+	c *gin.Context,
+) {
+	if h == nil {
+		response.InternalServerError(
+			c,
+			"Deepfake forensics handler is unavailable",
+			nil,
+		)
+		return
+	}
+
+	if h.engineClient == nil || !h.engineClient.isAvailable() {
+		response.Error(
+			c,
+			http.StatusServiceUnavailable,
+			"Deepfake media analysis engine is unavailable",
+			nil,
+		)
+		return
+	}
+
+	health, err := h.engineClient.CheckHealth(c.Request.Context())
+	if err != nil {
+		response.Error(
+			c,
+			http.StatusServiceUnavailable,
+			"Deepfake media analysis engine is not healthy",
+			err.Error(),
+		)
+		return
+	}
+
+	response.OK(
+		c,
+		"Deepfake media analysis engine is healthy",
+		health,
 	)
 }
 
@@ -583,7 +727,8 @@ func (h *Handler) authenticatedIdentity(
 		h.queryService == nil ||
 		h.trustService == nil ||
 		h.modelService == nil ||
-		h.reportService == nil {
+		h.reportService == nil ||
+		h.policyService == nil {
 		response.InternalServerError(
 			c,
 			"Deepfake forensics handler is unavailable",

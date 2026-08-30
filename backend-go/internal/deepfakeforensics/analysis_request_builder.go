@@ -138,8 +138,7 @@ func validateAnalysisSourceForEngine(
 			jobType,
 			mediaType,
 		) ||
-		NormalizeConstant(source.Model.ModelType) !=
-			jobType {
+		!analysisModelMatchesJob(source.Model, jobType) {
 		return fmt.Errorf(
 			"%w: incompatible job, media or model type",
 			ErrInvalidRepositoryInput,

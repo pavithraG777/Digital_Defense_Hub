@@ -24,7 +24,7 @@ type CreateNotificationRequest struct {
 	IncidentID   *string `json:"incident_id,omitempty" binding:"omitempty,uuid"`
 	ThreatID     *string `json:"threat_id,omitempty" binding:"omitempty,uuid"`
 
-	NotificationType string `json:"notification_type" binding:"required,oneof=THREAT_DETECTED INCIDENT_CREATED INCIDENT_ASSIGNED INCIDENT_STATUS_CHANGED EVIDENCE_MISMATCH SYSTEM_ALERT CUSTOM"`
+	NotificationType string `json:"notification_type" binding:"required,oneof=THREAT_DETECTED INCIDENT_CREATED INCIDENT_ASSIGNED INCIDENT_STATUS_CHANGED EVIDENCE_MISMATCH HONEYTOKEN_ALERT CANARY_FILE_ALERT MEDIA_ANALYSIS_COMPLETED EVIDENCE_VERIFIED CASE_ASSIGNED REPORT_APPROVAL CONTAINMENT_ACTION SYSTEM_ALERT CUSTOM"`
 	Category         string `json:"category" binding:"omitempty,oneof=SECURITY INCIDENT SYSTEM COMPLIANCE"`
 
 	Title    string `json:"title" binding:"required,min=3,max=255"`

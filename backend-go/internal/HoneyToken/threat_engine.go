@@ -244,8 +244,13 @@ func (e *ThreatEngine) correlateExistingThreat(
 		confidence = 99
 	}
 
-	affectedFileCount := existing.AffectedFileCount +
-		signal.AffectedFileCount
+	// occurrence_count is the number of correlated accesses.  Do not inflate
+	// affected_file_count when the same protected/canary/honeytoken resource is
+	// touched again; one file accessed five times is still one affected file.
+	affectedFileCount := existing.AffectedFileCount
+	if !isSameThreatResource(existing, signal) {
+		affectedFileCount += signal.AffectedFileCount
+	}
 
 	correlated, err := e.repository.CorrelateFileEvent(
 		ctx,
@@ -298,6 +303,19 @@ func (e *ThreatEngine) correlateExistingThreat(
 		Threat:        &response,
 		Reason:        "file event correlated with existing threat",
 	}, nil
+}
+
+func isSameThreatResource(existing *Threat, signal ThreatSignal) bool {
+	if existing == nil {
+		return false
+	}
+	return sameThreatUUID(existing.HoneytokenID, signal.HoneytokenID) ||
+		sameThreatUUID(existing.CanaryFileID, signal.CanaryFileID) ||
+		sameThreatUUID(existing.ProtectedFileID, signal.ProtectedFileID)
+}
+
+func sameThreatUUID(left, right *uuid.UUID) bool {
+	return left != nil && right != nil && *left != uuid.Nil && *left == *right
 }
 
 func validateThreatSignal(signal ThreatSignal) error {
@@ -353,15 +371,17 @@ func assessThreatSignal(
 		score += 20
 	}
 
+	// A deception interaction is strong evidence that a resource was touched,
+	// but it is not proof of compromise by itself.  Previously a canary or
+	// honeytoken event was forced to 85/95 (and an encrypted event to 100),
+	// making the score indistinguishable from a corroborated attack.  Use a
+	// calibrated signal instead; recurrence and independent evidence still
+	// raise the correlated score later in the workflow.
 	switch resourceType {
 	case "HONEYTOKEN":
-		if score < 95 {
-			score = 95
-		}
+		score = calibratedDeceptionScore(signal, eventType, 55, 78)
 	case "CANARY_FILE":
-		if score < 85 {
-			score = 85
-		}
+		score = calibratedDeceptionScore(signal, eventType, 45, 72)
 	case "PROTECTED_FILE":
 		score += 10
 	}
@@ -450,6 +470,41 @@ func assessThreatSignal(
 		EvidenceSummary:    evidenceSummary,
 		RecommendedActions: recommendedActions,
 	}, nil
+}
+
+func calibratedDeceptionScore(signal ThreatSignal, eventType string, floor int, encryptedScore int) int {
+	score := deceptionThreatEventScore(eventType, floor, encryptedScore)
+	if signal.Suspicious {
+		score += 8
+	}
+	if signal.PreviousHash != nil && signal.CurrentHash != nil &&
+		*signal.PreviousHash != "" && *signal.CurrentHash != "" &&
+		*signal.PreviousHash != *signal.CurrentHash {
+		score += 10
+	}
+	if signal.PreliminaryScore > score {
+		// Upstream tools may supply a higher evidence-backed score, but a
+		// single deception event never claims perfect certainty.
+		score = min(signal.PreliminaryScore, 95)
+	}
+	return score
+}
+
+// deceptionThreatEventScore prevents a high-risk generic file event from
+// automatically becoming a 100/100 threat merely because the file is a
+// canary. The caller has already applied suspicious/hash evidence before
+// this function, so keep the bare deception signal at its calibrated floor.
+func deceptionThreatEventScore(eventType string, floor int, encryptedScore int) int {
+	switch eventType {
+	case "ENCRYPTED", "MULTIPLE_FILE_CHANGES":
+		return encryptedScore
+	case "DELETED", "HASH_CHANGED", "PERMISSION_CHANGED":
+		return floor + 15
+	case "MODIFIED", "RENAMED", "MOVED":
+		return floor + 8
+	default:
+		return floor
+	}
 }
 
 func baseThreatEventScore(eventType string) int {

@@ -1,0 +1,43 @@
+services:
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+      DEEPFAKE_MINIO_BUCKET: ${DEEPFAKE_MINIO_BUCKET:-deepfake-media}
+      EVIDENCE_MINIO_BUCKET: ${EVIDENCE_MINIO_BUCKET:-security-evidence}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mc alias set local http://minio:9000 "$${MINIO_ACCESS_KEY}" "$${MINIO_SECRET_KEY}" &&
+        mc mb --ignore-existing local/"$${DEEPFAKE_MINIO_BUCKET}" &&
+        mc version enable local/"$${DEEPFAKE_MINIO_BUCKET}" &&
+        mc mb --ignore-existing --with-lock local/"$${EVIDENCE_MINIO_BUCKET}" &&
+        mc version enable local/"$${EVIDENCE_MINIO_BUCKET}" &&
+        mc retention set --default GOVERNANCE 30d local/"$${EVIDENCE_MINIO_BUCKET}"
+    restart: "no"
+
+volumes:
+  minio_data:

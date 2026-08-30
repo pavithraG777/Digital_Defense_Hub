@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
@@ -233,8 +234,19 @@ func buildNotificationProviders(
 	}
 
 	if notificationConfig.SMS.Enabled {
-		smsProvider, err :=
-			NewSMSProvider(
+		var smsProvider Provider
+		var err error
+		if strings.EqualFold(notificationConfig.SMS.ProviderName, "AWS_SNS") {
+			smsProvider, err = NewAWSSNSProvider(AWSSNSProviderConfig{
+				Region:             notificationConfig.SMS.AWSRegion,
+				Profile:            notificationConfig.SMS.AWSProfile,
+				SenderID:           notificationConfig.SMS.AWSSenderID,
+				SMSType:            notificationConfig.SMS.AWSSMSType,
+				DefaultCountryCode: notificationConfig.SMS.DefaultCountryCode,
+				Timeout:            notificationConfig.SMS.Timeout,
+			})
+		} else {
+			smsProvider, err = NewSMSProvider(
 				SMSProviderConfig{
 					ProviderName: notificationConfig.
 						SMS.ProviderName,
@@ -256,6 +268,7 @@ func buildNotificationProviders(
 						SMS.Timeout,
 				},
 			)
+		}
 		if err != nil {
 			return nil, fmt.Errorf(
 				"initialize SMS notification provider: %w",

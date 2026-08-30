@@ -16,8 +16,22 @@ const (
 
 	permissionHoneytokenCreate           = "HONEYTOKEN_CREATE"
 	permissionHoneytokenView             = "HONEYTOKEN_VIEW"
+	permissionHoneytokenViewAccessLog    = "HONEYTOKEN_VIEW_ACCESS_LOG"
+	permissionCanaryFileCreate           = "CANARY_FILE_CREATE"
+	permissionCanaryFileView             = "CANARY_FILE_VIEW"
+	permissionCanaryFileViewEvents       = "CANARY_FILE_VIEW_EVENTS"
 	permissionOrganizationManageSecurity = "ORGANIZATION_MANAGE_SECURITY"
 )
+
+type permissionMiddlewareFactory func(
+	db *pgxpool.Pool,
+	requiredPermission string,
+) gin.HandlerFunc
+
+type anyPermissionMiddlewareFactory func(
+	db *pgxpool.Pool,
+	requiredPermissions ...string,
+) gin.HandlerFunc
 
 // RegisterRoutes adds protected-file endpoints to an authenticated parent
 // route group. Authentication, session validation and audit middleware must
@@ -62,6 +76,16 @@ func RegisterRoutes(
 			permissionOrganizationManageSecurity,
 		),
 		handler.RestoreProtectedFile,
+	)
+
+	protectedFiles.POST(
+		"/:id/restore/owner/start",
+		handler.StartOwnerProtectedFileRestore,
+	)
+
+	protectedFiles.POST(
+		"/:id/restore/owner",
+		handler.RestoreProtectedFileOwner,
 	)
 }
 
@@ -181,11 +205,18 @@ func RegisterHoneytokenRoutes(
 		),
 		handler.GetHoneytoken,
 	)
+	honeytokens.GET("/:id/investigation", middleware.RequirePermission(databasePool, permissionHoneytokenView), investigationSummary(databasePool, "honeytoken_id"))
 
 	honeytokens.POST(
 		"/:id/deploy",
 		middleware.RequirePermission(databasePool, permissionOrganizationManageSecurity),
 		handler.DeployHoneytoken,
+	)
+
+	honeytokens.PATCH(
+		"/:id/status",
+		middleware.RequirePermission(databasePool, permissionOrganizationManageSecurity),
+		handler.DeactivateHoneytoken,
 	)
 
 	honeytokens.POST(
@@ -202,6 +233,20 @@ func RegisterCanaryRoutes(
 	handler *CanaryHandler,
 	databasePool *pgxpool.Pool,
 ) {
+	registerCanaryRoutes(
+		protectedRouter,
+		handler,
+		databasePool,
+		middleware.RequirePermission,
+	)
+}
+
+func registerCanaryRoutes(
+	protectedRouter *gin.RouterGroup,
+	handler *CanaryHandler,
+	databasePool *pgxpool.Pool,
+	requirePermission permissionMiddlewareFactory,
+) {
 	validateCanaryRouteDependencies(
 		protectedRouter,
 		handler,
@@ -214,38 +259,54 @@ func RegisterCanaryRoutes(
 
 	canaryFiles.POST(
 		"",
-		middleware.RequirePermission(
+		requirePermission(
 			databasePool,
-			permissionHoneytokenCreate,
+			permissionCanaryFileCreate,
 		),
 		handler.CreateCanaryFile,
 	)
 
+	canaryFiles.POST(
+		"/import",
+		requirePermission(
+			databasePool,
+			permissionCanaryFileCreate,
+		),
+		handler.ImportCanaryFile,
+	)
+
 	canaryFiles.GET(
 		"",
-		middleware.RequirePermission(
+		requirePermission(
 			databasePool,
-			permissionHoneytokenView,
+			permissionCanaryFileView,
 		),
 		handler.ListCanaryFiles,
 	)
 
 	canaryFiles.GET(
 		"/:id",
-		middleware.RequirePermission(
+		requirePermission(
 			databasePool,
-			permissionHoneytokenView,
+			permissionCanaryFileView,
 		),
 		handler.GetCanaryFile,
 	)
+	canaryFiles.GET("/:id/investigation", requirePermission(databasePool, permissionCanaryFileViewEvents), investigationSummary(databasePool, "canary_file_id"))
 
 	canaryFiles.POST(
 		"/:id/deploy",
-		middleware.RequirePermission(
+		requirePermission(
 			databasePool,
 			permissionOrganizationManageSecurity,
 		),
 		handler.DeployCanaryFile,
+	)
+
+	canaryFiles.PATCH(
+		"/:id/status",
+		requirePermission(databasePool, permissionOrganizationManageSecurity),
+		handler.DeactivateCanaryFile,
 	)
 }
 
@@ -255,6 +316,22 @@ func RegisterFileEventRoutes(
 	protectedRouter *gin.RouterGroup,
 	handler *FileEventHandler,
 	databasePool *pgxpool.Pool,
+) {
+	registerFileEventRoutes(
+		protectedRouter,
+		handler,
+		databasePool,
+		middleware.RequirePermission,
+		middleware.RequireAnyPermission,
+	)
+}
+
+func registerFileEventRoutes(
+	protectedRouter *gin.RouterGroup,
+	handler *FileEventHandler,
+	databasePool *pgxpool.Pool,
+	requirePermission permissionMiddlewareFactory,
+	requireAnyPermission anyPermissionMiddlewareFactory,
 ) {
 	validateFileEventRouteDependencies(
 		protectedRouter,
@@ -268,7 +345,7 @@ func RegisterFileEventRoutes(
 
 	fileEvents.POST(
 		"",
-		middleware.RequirePermission(
+		requirePermission(
 			databasePool,
 			permissionOrganizationManageSecurity,
 		),
@@ -277,18 +354,20 @@ func RegisterFileEventRoutes(
 
 	fileEvents.GET(
 		"",
-		middleware.RequirePermission(
+		requireAnyPermission(
 			databasePool,
-			permissionHoneytokenView,
+			permissionHoneytokenViewAccessLog,
+			permissionCanaryFileViewEvents,
 		),
 		handler.ListFileEvents,
 	)
 
 	fileEvents.GET(
 		"/:id",
-		middleware.RequirePermission(
+		requireAnyPermission(
 			databasePool,
-			permissionHoneytokenView,
+			permissionHoneytokenViewAccessLog,
+			permissionCanaryFileViewEvents,
 		),
 		handler.GetFileEvent,
 	)

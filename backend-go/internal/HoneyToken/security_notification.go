@@ -83,8 +83,9 @@ func (w *ThreatWorker) publishThreatDetectedNotification(
 	ctx context.Context,
 	threat *ThreatResponse,
 	threatCreated bool,
+	fileEventID uuid.UUID,
 ) error {
-	if threat == nil || !threatCreated {
+	if threat == nil || fileEventID == uuid.Nil {
 		return nil
 	}
 
@@ -126,6 +127,7 @@ func (w *ThreatWorker) publishThreatDetectedNotification(
 
 	payload, err := json.Marshal(
 		map[string]any{
+			"file_event_id":       fileEventID.String(),
 			"threat_id":           threat.ID,
 			"threat_code":         threat.ThreatCode,
 			"threat_type":         threat.ThreatType,
@@ -153,6 +155,10 @@ func (w *ThreatWorker) publishThreatDetectedNotification(
 	requiresAcknowledgement :=
 		threat.Severity == ThreatLevelHigh ||
 			threat.Severity == ThreatLevelCritical
+	titlePrefix := "Security Threat Detected: "
+	if !threatCreated {
+		titlePrefix = "Security Threat Activity: "
+	}
 
 	return w.publishSecurityNotification(
 		ctx,
@@ -162,13 +168,12 @@ func (w *ThreatWorker) publishThreatDetectedNotification(
 			ThreatID:       &threatID,
 			EventType:      SecurityNotificationEventThreatDetected,
 			Category:       "SECURITY",
-			Title: "Security Threat Detected: " +
-				threat.Title,
-			Message:       message,
-			Severity:      threat.Severity,
-			PriorityLevel: 0,
-			DeduplicationKey: "THREAT_DETECTED:" +
-				threatID.String(),
+			Title:          titlePrefix + threat.Title,
+			Message:        message,
+			Severity:       threat.Severity,
+			PriorityLevel:  0,
+			DeduplicationKey: "FILE_EVENT_ALERT:" +
+				fileEventID.String(),
 			RequiresAcknowledgement: requiresAcknowledgement,
 			Payload:                 payload,
 		},

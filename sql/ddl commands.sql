@@ -1,0 +1,7 @@
+CREATE TABLE Students (
+    StudentID INTEGER PRIMARY KEY AUTOINCREMENT,
+    Name TEXT NOT NULL,
+    Age INTEGER,
+    Department TEXT,
+    Email TEXT UNIQUE
+);

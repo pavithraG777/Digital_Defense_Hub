@@ -124,6 +124,24 @@ func (h *Handler) ListTrainingJobs(c *gin.Context) {
 	response.OK(c, "Training jobs retrieved successfully", result)
 }
 
+func (h *Handler) GetTrainingJob(c *gin.Context) {
+	organizationID, _, ok := h.authenticatedIdentity(c)
+	if !ok {
+		return
+	}
+	jobID, ok := handlerPathUUID(c, "training_job_id")
+	if !ok {
+		response.BadRequest(c, "Invalid training job ID", nil)
+		return
+	}
+	job, err := h.trainingService.GetJob(c.Request.Context(), organizationID, jobID)
+	if err != nil {
+		handleMediaAPIError(c, err, "Unable to retrieve training job")
+		return
+	}
+	response.OK(c, "Training job retrieved successfully", job)
+}
+
 func (h *Handler) CancelTrainingJob(c *gin.Context) {
 	organizationID, _, ok := h.authenticatedIdentity(c)
 	if !ok {
@@ -140,4 +158,27 @@ func (h *Handler) CancelTrainingJob(c *gin.Context) {
 		return
 	}
 	response.OK(c, "Training job cancelled successfully", job)
+}
+
+func (h *Handler) DecideTrainingApproval(c *gin.Context) {
+	organizationID, userID, ok := h.authenticatedIdentity(c)
+	if !ok {
+		return
+	}
+	jobID, ok := handlerPathUUID(c, "training_job_id")
+	if !ok {
+		response.BadRequest(c, "Invalid training job ID", nil)
+		return
+	}
+	var request DecideTrainingApprovalRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		response.BadRequest(c, "Invalid training approval request", err.Error())
+		return
+	}
+	result, err := h.trainingService.DecideApproval(c.Request.Context(), organizationID, userID, jobID, request)
+	if err != nil {
+		handleMediaAPIError(c, err, "Unable to decide training approval")
+		return
+	}
+	response.OK(c, "Training approval decision recorded", result)
 }

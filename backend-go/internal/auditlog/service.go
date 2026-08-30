@@ -46,6 +46,24 @@ type AuditLogRepository interface {
 	) (*AuditLog, error)
 }
 
+type timelineRepository interface {
+	ListTimeline(ctx context.Context, organizationID uuid.UUID, filter TimelineFilter) (*TimelinePage, error)
+}
+
+func (s *Service) ListTimeline(ctx context.Context, organizationID uuid.UUID, filter TimelineFilter) (*TimelinePage, error) {
+	if s == nil || s.repository == nil || organizationID == uuid.Nil {
+		return nil, fmt.Errorf("%w: audit timeline is unavailable", ErrAuditLogFailed)
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	repository, ok := s.repository.(timelineRepository)
+	if !ok {
+		return nil, fmt.Errorf("%w: audit timeline is unavailable", ErrAuditLogFailed)
+	}
+	return repository.ListTimeline(ctx, organizationID, filter)
+}
+
 type Service struct {
 	repository AuditLogRepository
 }
@@ -146,14 +164,6 @@ func (s *Service) LogSuccess(
 		&request,
 	)
 
-	fmt.Println("================================")
-	fmt.Println("AUDIT LOG SUCCESS CONTEXT")
-	fmt.Println("IP Address:", request.IPAddress)
-	fmt.Println("Device Name:", request.DeviceName)
-	fmt.Println("User Agent:", request.UserAgent)
-	fmt.Println("Session ID:", request.SessionID)
-	fmt.Println("================================")
-
 	auditEntry := &AuditLog{
 		OrganizationID: request.OrganizationID,
 		UserID:         request.UserID,
@@ -191,10 +201,6 @@ func (s *Service) LogSuccess(
 		return
 	}
 
-	fmt.Println(
-		"AUDIT LOG SUCCESS INSERTED:",
-		auditEntry.ID,
-	)
 }
 
 func (s *Service) LogFailure(
@@ -209,14 +215,6 @@ func (s *Service) LogFailure(
 		ctx,
 		&request,
 	)
-
-	fmt.Println("================================")
-	fmt.Println("AUDIT LOG FAILURE CONTEXT")
-	fmt.Println("IP Address:", request.IPAddress)
-	fmt.Println("Device Name:", request.DeviceName)
-	fmt.Println("User Agent:", request.UserAgent)
-	fmt.Println("Session ID:", request.SessionID)
-	fmt.Println("================================")
 
 	auditEntry := &AuditLog{
 		OrganizationID: request.OrganizationID,
@@ -257,10 +255,6 @@ func (s *Service) LogFailure(
 		return
 	}
 
-	fmt.Println(
-		"AUDIT LOG FAILURE INSERTED:",
-		auditEntry.ID,
-	)
 }
 
 func (s *Service) ListAuditLogs(
@@ -294,6 +288,26 @@ func (s *Service) ListAuditLogs(
 	}
 
 	return auditLogs, nil
+}
+
+// ListAuditLogsForOrganization is the tenant-facing read path. Keeping this
+// check in the service prevents a handler from accidentally exposing the
+// repository's operational (cross-tenant) list to a signed-in user.
+func (s *Service) ListAuditLogsForOrganization(ctx context.Context, organizationID uuid.UUID) ([]AuditLog, error) {
+	if organizationID == uuid.Nil {
+		return nil, fmt.Errorf("%w: organization ID is required", ErrInvalidAuditLog)
+	}
+	logs, err := s.ListAuditLogs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]AuditLog, 0, len(logs))
+	for _, entry := range logs {
+		if entry.OrganizationID != nil && *entry.OrganizationID == organizationID {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered, nil
 }
 
 func (s *Service) GetAuditLogByID(
@@ -631,6 +645,13 @@ func isSensitiveKey(
 		"authorization":    {},
 		"cookie":           {},
 		"session_token":    {},
+		"client_secret":    {},
+		"private_key":      {},
+		"encryption_key":   {},
+		"otp":              {},
+		"totp":             {},
+		"mfa_code":         {},
+		"recovery_code":    {},
 	}
 
 	_, exists := sensitiveKeys[normalizedKey]

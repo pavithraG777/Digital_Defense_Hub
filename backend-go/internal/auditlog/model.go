@@ -39,3 +39,36 @@ type AuditLog struct {
 	OccurredAt time.Time `db:"occurred_at"`
 	CreatedAt  time.Time `db:"created_at"`
 }
+
+// TimelineEvent is the normalized, safe-to-display representation used by the
+// central activity feed.  It deliberately contains no raw evidence, command
+// line, IP address, or audit metadata.
+type TimelineEvent struct {
+	ID          string    `json:"id"`
+	SourceType  string    `json:"source_type"`
+	EventCode   string    `json:"event_code"`
+	EventType   string    `json:"event_type"`
+	EventSource string    `json:"event_source"`
+	Resource    string    `json:"resource"`
+	Actor       string    `json:"actor"`
+	DeviceName  string    `json:"device_name"`
+	Severity    string    `json:"severity"`
+	Status      string    `json:"status"`
+	OccurredAt  time.Time `json:"occurred_at"`
+}
+
+type TimelineFilter struct {
+	Search     string
+	SourceType string
+	RiskLevel  string
+	Suspicious bool
+	From       *time.Time
+	To         *time.Time
+	Limit      int
+	Offset     int
+}
+
+type TimelinePage struct {
+	Items []TimelineEvent `json:"items"`
+	Total int             `json:"total"`
+}

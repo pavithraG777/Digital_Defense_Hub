@@ -7,6 +7,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
@@ -121,6 +122,7 @@ func (m *AssetFileManager) persistMediaStream(
 	}()
 
 	plaintextHasher := sha256.New()
+	plaintextSHA512Hasher := sha512.New()
 	destination := io.Writer(output)
 	var authentication hashFinalizer
 
@@ -144,6 +146,7 @@ func (m *AssetFileManager) persistMediaStream(
 		io.MultiWriter(
 			destination,
 			plaintextHasher,
+			plaintextSHA512Hasher,
 		),
 		limitedSource,
 		make(
@@ -220,6 +223,9 @@ func (m *AssetFileManager) persistMediaStream(
 		FileSizeBytes: writtenBytes,
 		FileHash: hex.EncodeToString(
 			plaintextHasher.Sum(nil),
+		),
+		FileHashSHA512: hex.EncodeToString(
+			plaintextSHA512Hasher.Sum(nil),
 		),
 
 		IsEncrypted:         m.encryptionEnabled,

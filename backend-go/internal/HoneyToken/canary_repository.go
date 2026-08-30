@@ -468,6 +468,24 @@ func (r *Repository) DeployCanaryFile(
 	return canary, nil
 }
 
+// DeactivateCanaryFile stops the monitor from claiming this deployed file.
+// The physical copy and all evidence remain intact until an operator rotates
+// or otherwise remediates it.
+func (r *Repository) DeactivateCanaryFile(ctx context.Context, organizationID, canaryID uuid.UUID) (*CanaryFile, error) {
+	query := `UPDATE canary_files SET status = $3, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL AND status IN ($4, $5, $6, $7)
+		RETURNING ` + canaryFileSelectColumns + `;`
+	canary, err := scanCanaryFile(r.db.QueryRow(ctx, query, canaryID, organizationID, CanaryStatusInactive,
+		CanaryStatusActive, CanaryStatusTriggered, CanaryStatusTampered, CanaryStatusMissing))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrCanaryFileNotDeployable
+	}
+	if err != nil {
+		return nil, mapCanaryFileWriteError(err, "failed to deactivate canary file")
+	}
+	return canary, nil
+}
+
 // ListMonitorableCanaryFiles returns deployed Canary files watched by the
 // internal monitoring service across all organizations.
 func (r *Repository) ListMonitorableCanaryFiles(

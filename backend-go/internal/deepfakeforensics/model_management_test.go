@@ -52,3 +52,45 @@ func TestResolveModelStoragePathKeepsFileInsideRoot(t *testing.T) {
 		t.Fatalf("expected path inside storage root, got %s", resolvedPath)
 	}
 }
+
+func TestInferModelIOForDocumentForensics(t *testing.T) {
+	inputType, outputType := inferModelIO(JobTypeDocumentForensics)
+	if inputType != "DOCUMENT" || outputType != "CLASSIFICATION" {
+		t.Fatalf("expected DOCUMENT/CLASSIFICATION for %s, got %s/%s", JobTypeDocumentForensics, inputType, outputType)
+	}
+}
+
+func TestInferModelIOForCrossModalVideoJobs(t *testing.T) {
+	cases := []struct {
+		jobType    string
+		wantInput  string
+		wantOutput string
+	}{
+		{jobType: JobTypeAudioVisualConsistency, wantInput: "VIDEO", wantOutput: "CONSISTENCY"},
+		{jobType: JobTypeLipSyncConsistency, wantInput: "VIDEO", wantOutput: "CONSISTENCY"},
+		{jobType: JobTypeMetadataIntegrity, wantInput: "VIDEO", wantOutput: "CONSISTENCY"},
+	}
+
+	for _, tc := range cases {
+		inputType, outputType := inferModelIO(tc.jobType)
+		if inputType != tc.wantInput || outputType != tc.wantOutput {
+			t.Fatalf("expected %s/%s for %s, got %s/%s", tc.wantInput, tc.wantOutput, tc.jobType, inputType, outputType)
+		}
+	}
+}
+
+func TestSyntheticImageDetectorContract(t *testing.T) {
+	inputType, outputType := inferModelIO(JobTypeSyntheticImage)
+	if inputType != "IMAGE" || outputType != "CLASSIFICATION" {
+		t.Fatalf("expected IMAGE/CLASSIFICATION, got %s/%s", inputType, outputType)
+	}
+	if !IsSupportedJobType(JobTypeSyntheticImage) {
+		t.Fatal("expected synthetic image detector job type to be supported")
+	}
+	if !IsDeepfakeAssessmentJobType(JobTypeSyntheticImage) {
+		t.Fatal("expected synthetic detector to use the shared authenticity assessment contract")
+	}
+	if IsDeepfakeJobType(JobTypeSyntheticImage) {
+		t.Fatal("synthetic detector must remain distinct from face-manipulation deepfake jobs")
+	}
+}

@@ -4,8 +4,6 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-
-	"github.com/pavithraG777/cyber-security-platform/backend/internal/response"
 )
 
 func RequireRoles(allowedRoles ...string) gin.HandlerFunc {
@@ -13,25 +11,13 @@ func RequireRoles(allowedRoles ...string) gin.HandlerFunc {
 
 		value, exists := c.Get("roles")
 		if !exists {
-			response.Error(
-				c,
-				http.StatusForbidden,
-				"Roles not found",
-				nil,
-			)
-			c.Abort()
+			abortWithError(c, http.StatusForbidden, "Roles not found", nil)
 			return
 		}
 
 		userRoles, ok := value.([]string)
 		if !ok {
-			response.Error(
-				c,
-				http.StatusForbidden,
-				"Invalid role information",
-				nil,
-			)
-			c.Abort()
+			abortWithError(c, http.StatusForbidden, "Invalid role information", nil)
 			return
 		}
 
@@ -47,13 +33,6 @@ func RequireRoles(allowedRoles ...string) gin.HandlerFunc {
 			}
 		}
 
-		response.Error(
-			c,
-			http.StatusForbidden,
-			"You are not authorized to access this resource",
-			nil,
-		)
-
-		c.Abort()
+		abortWithError(c, http.StatusForbidden, "You are not authorized to access this resource", nil)
 	}
 }

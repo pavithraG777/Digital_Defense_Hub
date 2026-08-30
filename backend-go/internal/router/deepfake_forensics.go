@@ -9,7 +9,47 @@ import (
 
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/config"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/deepfakeforensics"
+	"github.com/pavithraG777/cyber-security-platform/backend/internal/forensics"
 )
+
+func initializeForensicsModule(
+	databasePool *pgxpool.Pool,
+) (
+	*forensics.Handler,
+	error,
+) {
+	if databasePool == nil {
+		return nil, errors.New(
+			"database pool is required for forensics module",
+		)
+	}
+
+	repository, err := forensics.NewRepository(databasePool)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"initialize forensics repository: %w",
+			err,
+		)
+	}
+
+	service, err := forensics.NewService(repository)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"initialize forensics service: %w",
+			err,
+		)
+	}
+
+	handler, err := forensics.NewHandler(service)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"initialize forensics handler: %w",
+			err,
+		)
+	}
+
+	return handler, nil
+}
 
 // initializeDeepfakeForensicsModule wires the durable Go
 // orchestration layer to the authenticated offline Python
@@ -144,20 +184,9 @@ func initializeDeepfakeForensicsModule(
 		return nil, nil, fmt.Errorf("initialize ML training service: %w", err)
 	}
 
-	handler, err := deepfakeforensics.NewHandler(
-		assetService,
-		analysisService,
-		queryService,
-		trustService,
-		modelService,
-		reportService,
-		trainingService,
-	)
+	policyService, err := deepfakeforensics.NewOrganizationMediaPolicyService(databasePool)
 	if err != nil {
-		return nil, nil, fmt.Errorf(
-			"initialize deepfake forensics handler: %w",
-			err,
-		)
+		return nil, nil, fmt.Errorf("initialize organization media policy service: %w", err)
 	}
 
 	engineClient, err :=
@@ -167,11 +196,33 @@ func initializeDeepfakeForensicsModule(
 			moduleConfig.EngineTimeout,
 		)
 	if err != nil {
+		if logger != nil {
+			logger.Warn(
+				"Deepfake forensics engine client unavailable; continuing without live engine execution",
+				zap.Error(err),
+			)
+		}
+		engineClient = nil
+	}
+
+	handler, err := deepfakeforensics.NewHandler(
+		assetService,
+		analysisService,
+		queryService,
+		trustService,
+		modelService,
+		reportService,
+		trainingService,
+		policyService,
+		engineClient,
+	)
+	if err != nil {
 		return nil, nil, fmt.Errorf(
-			"initialize deepfake forensics engine client: %w",
+			"initialize deepfake forensics handler: %w",
 			err,
 		)
 	}
+	handler.SetReviewDB(databasePool)
 
 	worker, err :=
 		deepfakeforensics.NewAnalysisWorker(
@@ -207,6 +258,23 @@ func initializeDeepfakeForensicsModule(
 			"configure deepfake forensics storage security: %w",
 			err,
 		)
+	}
+
+	trainingWorker, err := deepfakeforensics.NewTrainingWorker(
+		repository,
+		engineClient,
+		logger,
+		moduleConfig.PollInterval,
+		moduleConfig.TrainingTimeout,
+		moduleConfig.ProcessingNode+"-training",
+		moduleConfig.TrainingArtifactEngineRoot,
+		moduleConfig.TrainingArtifactBackendRoot,
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("initialize ML training worker: %w", err)
+	}
+	if err = worker.SetTrainingWorker(trainingWorker); err != nil {
+		return nil, nil, fmt.Errorf("attach ML training worker: %w", err)
 	}
 
 	return handler, worker, nil

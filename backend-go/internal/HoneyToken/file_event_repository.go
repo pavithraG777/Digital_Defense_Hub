@@ -81,6 +81,8 @@ const fileEventSelectColumns = `
 type FileEventListFilter struct {
 	OrganizationID uuid.UUID
 	DepartmentID   *uuid.UUID
+	HoneytokenID   *uuid.UUID
+	CanaryFileID   *uuid.UUID
 	SourceType     string
 	EventType      string
 	Severity       string
@@ -631,6 +633,20 @@ func buildFileEventFilter(
 				len(arguments),
 			),
 		)
+	}
+
+	if filter.HoneytokenID != nil {
+		arguments = append(arguments, filter.HoneytokenID)
+		conditions = append(conditions, fmt.Sprintf(
+			"honeytoken_id = $%d", len(arguments),
+		))
+	}
+
+	if filter.CanaryFileID != nil {
+		arguments = append(arguments, filter.CanaryFileID)
+		conditions = append(conditions, fmt.Sprintf(
+			"canary_file_id = $%d", len(arguments),
+		))
 	}
 
 	if filter.SourceType != "" {

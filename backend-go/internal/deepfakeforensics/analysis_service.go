@@ -203,7 +203,8 @@ func (s *AnalysisService) StartMediaAnalysis(
 						jobType,
 					),
 					"create_visualization": jobType !=
-						JobTypeOCRExtraction,
+						JobTypeOCRExtraction &&
+						jobType != JobTypeDeepfakeImage,
 					"force_reanalysis": request.ForceReanalysis,
 				},
 				ExecutionDevice: executionDevice,
@@ -316,6 +317,16 @@ func jobTypesForAnalysisModes(
 		}
 
 		switch mode {
+		case AnalysisModeSynthetic:
+			if mediaType != MediaTypeImage {
+				return nil, fmt.Errorf(
+					"%w: synthetic-image analysis does not support %s",
+					ErrUnsupportedAnalysisMode,
+					mediaType,
+				)
+			}
+			addJobType(JobTypeSyntheticImage)
+
 		case AnalysisModeDeepfake:
 			jobType, ok :=
 				deepfakeJobTypeForMedia(
@@ -376,6 +387,19 @@ func jobTypesForAnalysisModes(
 			}
 
 			addJobType(JobTypeOCRExtraction)
+		case AnalysisModeCrossModal:
+			crossModalJobTypes, ok := crossModalJobTypesForMedia(mediaType)
+			if !ok {
+				return nil, fmt.Errorf(
+					"%w: cross-modal analysis does not support %s",
+					ErrUnsupportedAnalysisMode,
+					mediaType,
+				)
+			}
+
+			for _, jobType := range crossModalJobTypes {
+				addJobType(jobType)
+			}
 		}
 	}
 
@@ -386,6 +410,21 @@ func jobTypesForAnalysisModes(
 	return jobTypes, nil
 }
 
+func crossModalJobTypesForMedia(
+	mediaType string,
+) ([]string, bool) {
+	switch NormalizeConstant(mediaType) {
+	case MediaTypeVideo:
+		return []string{
+			JobTypeAudioVisualConsistency,
+			JobTypeLipSyncConsistency,
+			JobTypeMetadataIntegrity,
+		}, true
+
+	default:
+		return nil, false
+	}
+}
 func deepfakeJobTypeForMedia(
 	mediaType string,
 ) (string, bool) {
@@ -417,6 +456,9 @@ func forensicsJobTypeForMedia(
 	case MediaTypeAudio:
 		return JobTypeAudioForensics, true
 
+	case MediaTypeDocument:
+		return JobTypeDocumentForensics, true
+
 	default:
 		return "", false
 	}
@@ -426,11 +468,19 @@ func analysisModeForJobType(
 	jobType string,
 ) string {
 	switch {
+	case IsSyntheticJobType(jobType):
+		return AnalysisModeSynthetic
+
 	case IsDeepfakeJobType(jobType):
 		return AnalysisModeDeepfake
 
 	case IsForensicsJobType(jobType):
 		return AnalysisModeForensics
+
+	case NormalizeConstant(jobType) == JobTypeAudioVisualConsistency,
+		NormalizeConstant(jobType) == JobTypeLipSyncConsistency,
+		NormalizeConstant(jobType) == JobTypeMetadataIntegrity:
+		return AnalysisModeCrossModal
 
 	case NormalizeConstant(jobType) ==
 		JobTypeOCRExtraction:
