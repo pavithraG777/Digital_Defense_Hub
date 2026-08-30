@@ -95,7 +95,12 @@ class ImageFeatureSet:
 
 
 class ImageFeatureExtractor:
-    def __init__(self) -> None:
+    def __init__(self, maximum_analysis_dimension: int = 1600) -> None:
+        if maximum_analysis_dimension < 224:
+            raise ValueError(
+                "maximum_analysis_dimension must be at least 224"
+            )
+        self._maximum_analysis_dimension = maximum_analysis_dimension
         cascade_path = (
             get_media_runtime().model_root
             / "opencv"
@@ -158,6 +163,13 @@ class ImageFeatureExtractor:
         image = self.load_image(
             file_path,
         )
+
+        # Phone/camera photos can be 12-50 MP. Running FFT, ELA, ORB and
+        # Haar detection over every native pixel makes those uploads appear
+        # permanently stuck even though the classifier itself uses 224x224.
+        # Preserve the source file and aspect ratio, but bound the in-memory
+        # forensic working image to predictable CPU and memory usage.
+        image = self._resize_for_analysis(image)
 
         grayscale = cv2.cvtColor(
             image,
@@ -359,6 +371,24 @@ class ImageFeatureExtractor:
         )
 
         return image, feature_set
+
+    def _resize_for_analysis(
+        self,
+        image: np.ndarray,
+    ) -> np.ndarray:
+        height, width = image.shape[:2]
+        largest_dimension = max(height, width)
+        if largest_dimension <= self._maximum_analysis_dimension:
+            return image
+
+        scale = self._maximum_analysis_dimension / largest_dimension
+        resized_width = max(1, int(round(width * scale)))
+        resized_height = max(1, int(round(height * scale)))
+        return cv2.resize(
+            image,
+            (resized_width, resized_height),
+            interpolation=cv2.INTER_AREA,
+        )
 
     def _extract_face_feature(
         self,

@@ -133,7 +133,7 @@ func mapSpecializedResult(
 	error,
 ) {
 	switch {
-	case IsDeepfakeJobType(source.Job.JobType):
+	case IsDeepfakeAssessmentJobType(source.Job.JobType):
 		return mapDeepfakeResult(
 			source,
 			engineResponse,
@@ -143,6 +143,16 @@ func mapSpecializedResult(
 
 	case IsForensicsJobType(source.Job.JobType):
 		return mapForensicsResult(
+			source,
+			engineResponse,
+			bundle,
+			completedAt,
+		)
+
+	case NormalizeConstant(source.Job.JobType) == JobTypeAudioVisualConsistency,
+		NormalizeConstant(source.Job.JobType) == JobTypeLipSyncConsistency,
+		NormalizeConstant(source.Job.JobType) == JobTypeMetadataIntegrity:
+		return mapConsistencyResult(
 			source,
 			engineResponse,
 			bundle,
@@ -196,12 +206,20 @@ func mapDeepfakeResult(
 		assessment.DetectionSummary,
 	)
 
-	featureData := cloneMap(
-		assessment.FeatureData,
-	)
-	featureData["signals"] = assessment.Signals
-	featureData["runtime"] = engineResponse.Runtime
-	featureData["warnings"] = engineResponse.Warnings
+	// Persist only the evidence needed by the UI and report pipeline. The raw
+	// extractor payload can be disproportionately large for phone photos and
+	// is not needed to reproduce the displayed verdict.
+	featureData := map[string]any{
+		"signals":  assessment.Signals,
+		"runtime":  engineResponse.Runtime,
+		"warnings": engineResponse.Warnings,
+	}
+	if inference, ok := assessment.FeatureData["model_inference"]; ok {
+		featureData["model_inference"] = inference
+	}
+	if heuristic, ok := assessment.FeatureData["heuristic_probability"]; ok {
+		featureData["heuristic_probability"] = heuristic
+	}
 
 	regions, err := valuesToMaps(
 		assessment.SuspiciousRegions,
@@ -248,9 +266,20 @@ func mapDeepfakeResult(
 		CreatedAt: completedAt,
 	}
 
-	resultData, err := valueToMap(assessment)
-	if err != nil {
-		return "", nil, nil, nil, false, nil, err
+	// The detailed feature payload is already stored in the specialized
+	// result. Keep the shared evidence record compact: phone-camera images can
+	// produce a much larger forensic payload and serializing it twice blocked
+	// workers after they had reported 85% progress.
+	resultData := map[string]any{
+		"media_type":                 assessment.MediaType,
+		"detection_result":           assessment.DetectionResult,
+		"deepfake_probability":       assessment.DeepfakeProbability,
+		"authenticity_probability":   assessment.AuthenticityProbability,
+		"confidence_score":           assessment.ConfidenceScore,
+		"faces_detected":             assessment.FacesDetected,
+		"manipulated_faces_detected": assessment.ManipulatedFacesDetected,
+		"detection_summary":          assessment.DetectionSummary,
+		"visualization_file_path":    assessment.VisualizationFilePath,
 	}
 
 	reviewRequired := false
@@ -470,6 +499,85 @@ func mapOCRResult(
 		nil
 }
 
+func mapConsistencyResult(
+	source AnalysisSource,
+	engineResponse *MediaEngineResponse,
+	bundle *AnalysisResultBundle,
+	completedAt time.Time,
+) (
+	string,
+	*float64,
+	*string,
+	*string,
+	bool,
+	map[string]any,
+	error,
+) {
+	assessment := engineResponse.ConsistencyAssessment
+	if assessment == nil {
+		return "", nil, nil, nil, false, nil,
+			ErrInvalidMediaEngineResponse
+	}
+
+	confidence := assessment.ConfidenceScore
+	summary := strings.TrimSpace(assessment.ConsistencyResult)
+
+	featureData := cloneMap(assessment.FeatureData)
+	featureData["signals"] = assessment.Signals
+	featureData["runtime"] = engineResponse.Runtime
+	featureData["warnings"] = engineResponse.Warnings
+
+	regions, err := valuesToMaps(assessment.SuspiciousRegions)
+	if err != nil {
+		return "", nil, nil, nil, false, nil, err
+	}
+
+	bundle.Forensics = &MediaForensicsResult{
+		ID: uuid.New(),
+
+		AnalysisJobID:  source.Job.ID,
+		OrganizationID: source.Job.OrganizationID,
+		MediaAssetID:   source.Job.MediaAssetID,
+		EvidenceID:     source.Job.EvidenceID,
+		EvidenceFileID: source.Job.EvidenceFileID,
+
+		MediaType:       assessment.MediaType,
+		ForensicResult:  assessment.ConsistencyResult,
+		ConfidenceScore: &confidence,
+
+		AnalysisSummary: &summary,
+
+		SuspiciousLocations: regions,
+		ForensicFeatureData: featureData,
+
+		VisualizationFilePath: assessment.VisualizationFilePath,
+
+		CreatedAt: completedAt,
+	}
+
+	resultData, err := valueToMap(assessment)
+	if err != nil {
+		return "", nil, nil, nil, false, nil, err
+	}
+
+	reviewRequired := false
+	// treat non-clean consistency results as review-required
+	switch NormalizeConstant(assessment.ConsistencyResult) {
+	case "CLEAN":
+		reviewRequired = false
+	default:
+		reviewRequired = true
+	}
+
+	return evidenceAnalysisForensicsResult(assessment.ConsistencyResult),
+		&confidence,
+		&summary,
+		nil,
+		reviewRequired,
+		resultData,
+		nil
+}
+
 // evidenceAnalysisTypeForJob maps specialized media job
 // types to the shared evidence_analysis domain.
 func evidenceAnalysisTypeForJob(
@@ -477,7 +585,7 @@ func evidenceAnalysisTypeForJob(
 ) string {
 	normalizedJobType := NormalizeConstant(jobType)
 
-	if IsDeepfakeJobType(normalizedJobType) {
+	if IsDeepfakeAssessmentJobType(normalizedJobType) {
 		return "DEEPFAKE_DETECTION"
 	}
 

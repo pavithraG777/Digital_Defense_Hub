@@ -48,3 +48,8 @@ ai-service-python/__pycache__/
 .idea/
 .DS_Store
 Thumbs.db
+# Private, user-supplied camera originals must never be committed.
+data/private-training/
+
+# Prepared training corpora and downloaded public datasets are local artifacts.
+datasets/unified-manipulation-detection-v5-12000/

@@ -69,7 +69,39 @@ func (r *Repository) ResolveAnalysisModel(
 		INNER JOIN ai_model_versions AS v
 			ON v.ai_model_id = m.id
 		WHERE m.organization_id = $1
-			AND m.model_type = $2
+			AND (
+				(
+					$2 = 'AI_GENERATED_IMAGE_DETECTION'
+					AND (
+						COALESCE(
+							v.configuration->>'detector_scope',
+							''
+						) = 'AI_GENERATED_IMAGE_DETECTION'
+						OR COALESCE(
+							v.configuration->>'positive_class_semantics',
+							''
+						) IN (
+							'AI_GENERATED',
+							'AI_GENERATED_OR_FACE_MANIPULATED'
+						)
+					)
+				)
+				OR (
+					$2 = 'DEEPFAKE_IMAGE_DETECTION'
+					AND m.model_type = 'DEEPFAKE_IMAGE_DETECTION'
+					AND COALESCE(
+						v.configuration->>'detector_scope',
+						'DEEPFAKE_IMAGE_DETECTION'
+					) = 'DEEPFAKE_IMAGE_DETECTION'
+				)
+				OR (
+					$2 NOT IN (
+						'AI_GENERATED_IMAGE_DETECTION',
+						'DEEPFAKE_IMAGE_DETECTION'
+					)
+					AND m.model_type = $2
+				)
+			)
 			AND m.deleted_at IS NULL
 			AND m.status IN ($4, $5)
 			AND v.status IN ($6, $7)

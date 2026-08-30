@@ -59,10 +59,11 @@ type AnalysisMaintenancePolicy struct {
 // AnalysisWorker polls PostgreSQL for organization-scoped
 // jobs and executes them through the offline Python engine.
 type AnalysisWorker struct {
-	repository   *Repository
-	engineClient *EngineClient
-	logger       *zap.Logger
-	fileManager  *AssetFileManager
+	repository     *Repository
+	engineClient   *EngineClient
+	logger         *zap.Logger
+	fileManager    *AssetFileManager
+	trainingWorker *TrainingWorker
 
 	maintenancePolicy AnalysisMaintenancePolicy
 
@@ -104,10 +105,6 @@ func NewAnalysisWorker(
 	if repository == nil ||
 		!repository.IsAvailable() {
 		return nil, ErrRepositoryUnavailable
-	}
-	if engineClient == nil ||
-		!engineClient.isAvailable() {
-		return nil, ErrMediaEngineUnavailable
 	}
 
 	if logger == nil {
@@ -194,6 +191,21 @@ func (w *AnalysisWorker) SetStorageSecurity(
 	return nil
 }
 
+// SetTrainingWorker attaches the ML-training queue to the same application
+// lifecycle as media analysis. It must be configured before Start.
+func (w *AnalysisWorker) SetTrainingWorker(trainingWorker *TrainingWorker) error {
+	if w == nil || trainingWorker == nil {
+		return ErrAnalysisWorkerUnavailable
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.started || w.stopped {
+		return errors.New("training worker must be configured before worker start")
+	}
+	w.trainingWorker = trainingWorker
+	return nil
+}
+
 // Start launches the configured database polling workers.
 func (w *AnalysisWorker) Start(
 	parent context.Context,
@@ -223,6 +235,13 @@ func (w *AnalysisWorker) Start(
 
 	w.cancel = cancel
 	w.started = true
+	if w.trainingWorker != nil {
+		if err := w.trainingWorker.Start(workerContext); err != nil {
+			cancel()
+			w.started = false
+			return fmt.Errorf("start ML training worker: %w", err)
+		}
+	}
 
 	maintenanceEnabled := w.fileManager != nil
 	if maintenanceEnabled {
@@ -319,6 +338,11 @@ func (w *AnalysisWorker) Stop(
 
 	if cancel != nil {
 		cancel()
+	}
+	if w.trainingWorker != nil {
+		if err := w.trainingWorker.Stop(ctx); err != nil {
+			return fmt.Errorf("stop ML training worker: %w", err)
+		}
 	}
 
 	completed := make(chan struct{})
@@ -572,6 +596,26 @@ func (w *AnalysisWorker) processClaimedJob(
 		return
 	}
 
+	if w.engineClient == nil ||
+		!w.engineClient.isAvailable() {
+		w.logger.Warn(
+			"Skipping media analysis because the engine client is unavailable",
+			zap.String(
+				"analysis_job_id",
+				job.ID.String(),
+			),
+		)
+		w.handleJobFailure(
+			workerIndex,
+			job,
+			nil,
+			"MEDIA_ENGINE_UNAVAILABLE",
+			ErrMediaEngineUnavailable,
+			time.Since(startedAt),
+		)
+		return
+	}
+
 	engineRequest, err :=
 		BuildMediaEngineRequest(*source)
 	if err != nil {
@@ -648,6 +692,15 @@ func (w *AnalysisWorker) processClaimedJob(
 			err,
 			time.Since(startedAt),
 		)
+		return
+	}
+
+	if err = w.repository.UpdateAnalysisJobProgress(
+		processingContext,
+		job.ID,
+		90,
+	); err != nil {
+		w.handleJobFailure(workerIndex, job, engineResponse, "ANALYSIS_PROGRESS_UPDATE_FAILED", err, time.Since(startedAt))
 		return
 	}
 

@@ -34,9 +34,18 @@ func (r *Repository) PersistAnalysisResult(
 		return err
 	}
 
-	responseDataJSON, err := json.Marshal(
-		engineResponse,
-	)
+	// Specialized result tables retain the forensic feature data. The job row
+	// only needs a compact response summary; duplicating the complete engine
+	// payload can be expensive for high-resolution camera photographs.
+	responseDataJSON, err := json.Marshal(map[string]any{
+		"success":                engineResponse.Success,
+		"analysis_job_id":        engineResponse.AnalysisJobID,
+		"organization_id":        engineResponse.OrganizationID,
+		"runtime":                engineResponse.Runtime,
+		"processing_duration_ms": engineResponse.ProcessingDurationMS,
+		"processed_at":           engineResponse.ProcessedAt,
+		"warnings":               engineResponse.Warnings,
+	})
 	if err != nil {
 		return fmt.Errorf(
 			"%w: encode media engine response: %v",
@@ -186,7 +195,7 @@ func validateAnalysisResultPersistence(
 	}
 
 	switch {
-	case IsDeepfakeJobType(source.Job.JobType):
+	case IsDeepfakeAssessmentJobType(source.Job.JobType):
 		if bundle.Deepfake == nil ||
 			!validSpecializedResultIdentity(
 				source,
