@@ -1,0 +1,29 @@
+{
+  "type": "image_classification",
+  "task": "synthetic_image_detection",
+  "classes": [
+    "authentic",
+    "deepfake"
+  ],
+  "positive_class_semantics": "AI_GENERATED",
+  "negative_class_semantics": "CAMERA_ORIGINAL",
+  "image_size": 224,
+  "record_count": 10000,
+  "class_distribution": {
+    "authentic": 5000,
+    "deepfake": 5000
+  },
+  "category_distribution": {
+    "uncategorized": {
+      "authentic": 5000,
+      "ai_generated": 5000
+    }
+  },
+  "selection_seed": 42,
+  "sources": [
+    "E:\\Cyber-Security-Platform\\data\\downloaded\\ddata"
+  ],
+  "provenance_manifest": "provenance.csv",
+  "content_deduplication": "SHA256",
+  "sha256": "17d3fc784aa286db34ee49568c2ef482af851801aed6cbbab7b77e369cf007f0"
+}
