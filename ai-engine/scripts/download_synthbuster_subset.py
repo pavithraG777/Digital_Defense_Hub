@@ -64,7 +64,9 @@ def main() -> None:
             manifest_rows = list(csv.DictReader(handle))
 
     page_size = 100
+    manifested = {Path(row["file"]).stem for row in manifest_rows}
     downloaded = len(existing)
+    failed_in_pass = 0
     offset = 0
     total = None
     while downloaded < args.count and (total is None or offset < total):
@@ -83,9 +85,23 @@ def main() -> None:
                 continue
             image_id = str(row["image_id"])
             if image_id in existing:
+                if image_id not in manifested:
+                    manifest_rows.append({
+                        "file": f"{image_id}.jpg",
+                        "label": "deepfake",
+                        "category": "ai_generated",
+                        "source": str(row.get("source", "unknown")),
+                        "dataset": DATASET,
+                    })
+                    manifested.add(image_id)
                 continue
             destination = args.output / f"{image_id}.jpg"
-            download(str(row["image"]["src"]), destination)
+            try:
+                download(str(row["image"]["src"]), destination, attempts=8)
+            except Exception as error:
+                failed_in_pass += 1
+                print(f"skipped {image_id}: {error}", flush=True)
+                continue
             manifest_rows.append({
                 "file": destination.name,
                 "label": "deepfake",
@@ -94,6 +110,7 @@ def main() -> None:
                 "dataset": DATASET,
             })
             existing.add(image_id)
+            manifested.add(image_id)
             downloaded += 1
             if downloaded % 100 == 0:
                 print(f"downloaded {downloaded}/{args.count}", flush=True)
@@ -109,7 +126,10 @@ def main() -> None:
             writer.writeheader()
             writer.writerows(manifest_rows)
 
-    print(f"complete: {downloaded} valid AI-generated images in {args.output}")
+    print(
+        f"complete: {downloaded} valid AI-generated images in {args.output}; "
+        f"temporary failures={failed_in_pass}"
+    )
 
 
 if __name__ == "__main__":
