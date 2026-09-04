@@ -1,23 +1,23 @@
 package incidentlearning
 
 import (
-    "net/http"
-
-    "github.com/gin-gonic/gin"
-    "github.com/jackc/pgx/v5/pgxpool"
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pavithraG777/cyber-security-platform/backend/internal/middleware"
+	"github.com/pavithraG777/cyber-security-platform/backend/internal/operational"
 )
 
-type Handler struct{}
+type Handler struct{ db *pgxpool.Pool }
 
-func NewHandler() *Handler {
-    return &Handler{}
+func NewHandler() *Handler { return &Handler{} }
+func RegisterRoutes(p *gin.RouterGroup, h *Handler, db *pgxpool.Pool) {
+	if p == nil || h == nil || db == nil {
+		return
+	}
+	h.db = db
+	g := p.Group("/incident-learning")
+	g.GET("", middleware.RequirePermission(db, "THREAT_VIEW"), h.GetIncidentLearning)
 }
-
-func RegisterRoutes(protected *gin.RouterGroup, handler *Handler, databasePool *pgxpool.Pool) {
-    group := protected.Group("/incident-learning")
-    group.GET("", handler.GetIncidentLearning)
-}
-
 func (h *Handler) GetIncidentLearning(c *gin.Context) {
-    c.JSON(http.StatusOK, gin.H{"message": "incident learning endpoint"})
+	operational.ListIncidentStage(c, h.db, "incident learning", []string{"RESOLVED", "CLOSED"})
 }

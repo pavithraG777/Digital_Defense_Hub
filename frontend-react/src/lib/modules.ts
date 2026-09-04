@@ -17,6 +17,22 @@ const userCreateFields = [
   { name: "role_id", label: "Role ID", required: true, placeholder: "UUID from Role Management" },
 ];
 
+const analysisJobFields = [
+  { name: "target_uri", label: "Approved local/evidence URI", required: true, placeholder: "evidence://asset-id or secured local path" },
+  { name: "file_name", label: "File name" },
+  { name: "mime_type", label: "MIME type", placeholder: "application/octet-stream" },
+  { name: "sha256_hash", label: "SHA-256 (optional)", placeholder: "64 hexadecimal characters" },
+  { name: "parameters", label: "Parameters (JSON)", type: "json" as const, placeholder: "{}" },
+];
+
+const assessmentFields = [
+  { name: "target_type", label: "Target type", required: true },
+  { name: "target_id", label: "Target identifier", required: true },
+  { name: "profile", label: "Assessment profile", required: true },
+  { name: "findings", label: "Findings (JSON array)", type: "json" as const, required: true, placeholder: '[{"code":"CHECK-1","title":"Observed control","severity":"LOW","status":"PASS","evidence":"Verified evidence"}]' },
+  { name: "evidence", label: "Supporting evidence (JSON)", type: "json" as const, placeholder: "{}" },
+];
+
 export const modules: ModuleDefinition[] = [
   {
     id: "dashboard", title: "Executive Dashboard", icon: "LayoutDashboard", description: "A live, evidence-based overview derived from connected security sources.",
@@ -239,6 +255,64 @@ export const modules: ModuleDefinition[] = [
       planned("incidents", "Incident reports", "Generate an incident response report."),
       planned("deepfake", "Deepfake reports", "Generate a deepfake forensic report."),
       planned("organization", "Organization reports", "Generate organization security and activity reports."),
+    ],
+  },
+  {
+    id: "exposure-operations", title: "Exposure Management", icon: "ScanSearch", description: "Inventory assets, vulnerabilities, attack surface and configuration posture using tenant-scoped records.",
+    screens: [
+      connected("assets", "Asset inventory", "Organization asset directory from the operational asset service.", [live("assets", "Assets", "/assets", "/assets/:id")]),
+      connected("vulnerabilities", "Vulnerability management", "Tracked vulnerabilities and their remediation lifecycle.", [live("vulnerabilities", "Vulnerabilities", "/vulnerabilities", "/vulnerabilities/:id")]),
+      connected("attack-surface", "Attack-surface assessments", "Persisted assessment findings and server-calculated risk scores.", [live("surface", "Attack surface", "/attack-surface", "/attack-surface/:id")], [{ label: "Create assessment", method: "POST", path: "/attack-surface/assess", fields: assessmentFields }]),
+      connected("configuration", "Configuration assessments", "Configuration posture computed from submitted checks.", [live("configuration", "Configuration posture", "/config-assessment")]),
+      connected("cloud-mobile", "Cloud and mobile assessments", "Persisted cloud and mobile security findings.", [live("cloud", "Cloud/mobile assessments", "/cloud", "/cloud/:id")], [{ label: "Create cloud assessment", method: "POST", path: "/cloud/analyze", fields: assessmentFields }]),
+    ],
+  },
+  {
+    id: "detection-operations", title: "Detection Operations", icon: "Radar", description: "Investigate alerts, behavior, DLP, UEBA, insider-risk and monitoring records.",
+    screens: [
+      connected("alerts", "Alert management", "Operational alert records and acknowledgement state.", [live("alerts", "Alerts", "/alert-management", "/alert-management/:id")]),
+      connected("behavior", "Behavior analysis", "Observed behavior events and evidence payloads.", [live("behavior", "Behavior events", "/behavior/events")]),
+      connected("dlp", "Data loss prevention", "DLP policy violation event records.", [live("dlp", "DLP events", "/dlp/events")]),
+      connected("ueba", "UEBA", "User/entity behavior events and high-risk anomalies.", [live("events", "UEBA events", "/ueba/events"), live("anomalies", "UEBA anomalies", "/ueba/anomalies")]),
+      connected("insider", "Insider-threat management", "Insider-risk cases and investigation requests.", [live("cases", "Insider-threat cases", "/insider-threat", "/insider-threat/:id"), live("investigations", "Investigation requests", "/insider-threat/investigations")]),
+      connected("monitoring", "Security monitoring", "Security-monitoring observations and silence requests.", [live("monitoring", "Monitoring records", "/security-monitoring", "/security-monitoring/:id"), live("silence", "Silence requests", "/security-monitoring/silence-actions")]),
+    ],
+  },
+  {
+    id: "governance-operations", title: "Security Governance", icon: "ShieldCheck", description: "Compliance, access control, policy, metadata and removable-media governance.",
+    screens: [
+      connected("access", "Access-control operations", "Audited grant and revoke records.", [live("access", "Access operations", "/access-control", "/access-control/:id")]),
+      connected("compliance", "Compliance audits", "Persisted audit checks and calculated compliance scores.", [live("compliance", "Compliance audits", "/compliance/checks")]),
+      connected("policy", "Policy evaluation", "Deterministic policy decisions and rule reasons.", [live("policy", "Policy evaluations", "/policy/evaluations")]),
+      connected("metadata", "Metadata validation", "Required, prohibited and expected metadata validation results.", [live("metadata", "Metadata validations", "/metadata", "/metadata/:id")]),
+      connected("usb", "USB management", "Observed USB devices, organization policy and block requests.", [live("devices", "USB devices", "/usb/devices"), live("policy", "USB policy", "/usb/policy"), live("actions", "USB actions", "/usb/actions")]),
+    ],
+  },
+  {
+    id: "analysis-operations", title: "Analysis Operations", icon: "Microscope", description: "Durable analysis jobs backed by authorized workers; the UI never invents completed scanner results.",
+    screens: [
+      connected("malware", "Malware analysis", "Malware scan jobs and current execution status.", [live("malware", "Malware jobs", "/malware", "/malware/:id")], [{ label: "Request malware analysis", method: "POST", path: "/malware/analyze", fields: analysisJobFields }]),
+      connected("audio", "Audio analysis", "Standalone audio-forensics jobs.", [live("audio", "Audio jobs", "/audio", "/audio/:id")], [{ label: "Request audio analysis", method: "POST", path: "/audio/analyze", fields: analysisJobFields }]),
+      connected("documents", "Document analysis", "OCR and document analysis jobs.", [live("documents", "Document jobs", "/documents", "/documents/:id")], [{ label: "Request document analysis", method: "POST", path: "/documents/analyze", fields: analysisJobFields }]),
+      connected("email", "Email analysis", "Email security analysis jobs.", [live("email", "Email jobs", "/emails", "/emails/:id")], [{ label: "Request email analysis", method: "POST", path: "/emails/analyze", fields: analysisJobFields }]),
+      connected("images", "Generic image analysis", "General image-forensics jobs.", [live("images", "Image jobs", "/images", "/images/:id")], [{ label: "Request image analysis", method: "POST", path: "/images/analyze", fields: analysisJobFields }]),
+      connected("faces", "Face analysis", "Face-manipulation analysis jobs.", [live("faces", "Face jobs", "/faces", "/faces/:id")], [{ label: "Request face analysis", method: "POST", path: "/faces/analyze", fields: analysisJobFields }]),
+      connected("memory", "Memory forensics", "Memory scan jobs and reports.", [live("memory", "Memory reports", "/memoryforensics/reports", "/memoryforensics/reports/:id")], [{ label: "Request memory scan", method: "POST", path: "/memoryforensics/scan", fields: analysisJobFields }]),
+      connected("surveillance", "Surveillance analysis", "Authorized surveillance-analysis jobs and insights.", [live("surveillance", "Surveillance insights", "/surveillance/insights", "/surveillance/insights/:id")], [{ label: "Request surveillance analysis", method: "POST", path: "/surveillance/track", fields: analysisJobFields }]),
+      connected("copilot", "Security Copilot", "Persisted incident-summary requests and worker results.", [live("copilot", "Copilot jobs", "/copilot/assist", "/copilot/:id")], [{ label: "Request incident summary", method: "POST", path: "/copilot/summarize", fields: analysisJobFields }]),
+    ],
+  },
+  {
+    id: "response-automation", title: "Response Automation", icon: "Workflow", description: "Threat analysis, hunting, response, persistence, integrations and authorized job execution records.",
+    screens: [
+      connected("analysis", "Threat analysis", "Threat-analysis records and requested actions.", [live("analysis", "Threat analyses", "/threat-analysis", "/threat-analysis/:id"), live("actions", "Analysis actions", "/threat-analysis/actions")]),
+      connected("hunting", "Threat hunting", "Threat-hunt records and investigation requests.", [live("hunts", "Threat hunts", "/threat-hunting", "/threat-hunting/:id"), live("actions", "Hunt actions", "/threat-hunting/actions")]),
+      connected("response", "Threat response", "Authorized response requests and lifecycle state.", [live("responses", "Threat responses", "/threat-response", "/threat-response/:id"), live("actions", "Response actions", "/threat-response/actions")]),
+      connected("persistence", "Persistence discovery", "Persistence assessment findings.", [live("checks", "Persistence checks", "/persistence/checks", "/persistence/checks/:id")], [{ label: "Run persistence assessment", method: "POST", path: "/persistence/discover", fields: assessmentFields }]),
+      connected("integrations", "SIEM and ticket integrations", "Outbound requests waiting for an authorized integration executor.", [live("requests", "Integration requests", "/integration/requests")]),
+      connected("incident-analytics", "Incident analytics", "Snapshots calculated from canonical incident records.", [live("analytics", "Incident analytics", "/incident-analytics", "/incident-analytics/:id")]),
+      connected("incident-lifecycle", "Incident lifecycle views", "Canonical incident records projected for each authorized response stage.", [live("triage", "Triage", "/incident-triage"), live("orchestration", "Orchestration", "/incident-orchestration"), live("remediation", "Remediation", "/incident-remediation"), live("resolution", "Resolution", "/incident-resolution"), live("review", "Review", "/incident-review"), live("closure", "Closure", "/incident-closure"), live("reporting", "Reporting", "/incident-reporting"), live("learning", "Learning", "/incident-learning"), live("after-action", "After action", "/incident-after-action")]),
+      connected("operations", "Security operations", "Audited operational action requests.", [live("operations", "Operations", "/security-operations", "/security-operations/:id")]),
     ],
   },
   {

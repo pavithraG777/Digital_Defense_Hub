@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { Activity, Bell, BellRing, BookOpen, Bot, Building2, Camera, ChevronLeft, ChevronRight, FileClock, FileWarning, FolderSearch2, GitBranch, HeartPulse, Inbox, KeyRound, LayoutDashboard, LogOut, Menu, Pencil, Search, ShieldAlert, ShieldCheck, Siren, Users, X } from "lucide-react";
+import { Activity, Bell, BellRing, BookOpen, Bot, Building2, Camera, ChevronLeft, ChevronRight, FileClock, FileWarning, FolderSearch2, GitBranch, HeartPulse, Inbox, KeyRound, LayoutDashboard, LogOut, Menu, Microscope, Pencil, Radar, ScanSearch, Search, ShieldAlert, ShieldCheck, Siren, Users, Workflow, X } from "lucide-react";
 import type { AuthUser } from "../types";
 import { api, session } from "../lib/api";
 import { BrandLogo } from "./BrandLogo";
@@ -12,6 +12,7 @@ const navigation = [
   { label: "Deception", items: [{ to: "/honeytokens", label: "Honeytokens", icon: KeyRound }, { to: "/canary-files", label: "Canary Files", icon: FileWarning }] },
   { label: "Security Operations", items: [{ to: "/threats", label: "Threat Center", icon: ShieldAlert }, { to: "/threat-score", label: "Threat Score", icon: Activity }, { to: "/incidents", label: "Incident Response", icon: Siren }, { to: "/investigations", label: "Investigations", icon: FolderSearch2 }, { to: "/attack-stories", label: "Attack Stories", icon: GitBranch }] },
   { label: "AI Forensics", items: [{ to: "/deepfake-image-analysis", label: "Image Analysis", icon: Bot }, { to: "/module/deepfake/analysis", label: "Analysis History", icon: FileClock }, { to: "/evidence-vault", label: "Evidence Vault", icon: BookOpen }, { to: "/module/deepfake/reports", label: "Forensic Reports", icon: BookOpen }] },
+  { label: "Operational Modules", items: [{ to: "/module/exposure-operations/assets", label: "Exposure Management", icon: ScanSearch }, { to: "/module/detection-operations/alerts", label: "Detection Operations", icon: Radar }, { to: "/module/governance-operations/access", label: "Security Governance", icon: ShieldCheck }, { to: "/module/analysis-operations/malware", label: "Analysis Operations", icon: Microscope }, { to: "/module/response-automation/analysis", label: "Response Automation", icon: Workflow }] },
   { label: "System", items: [{ to: "/notifications", label: "Notifications", icon: Inbox }, { to: "/audit-activity", label: "Audit Activity", icon: Activity }, { to: "/module/system/health", label: "System Health", icon: HeartPulse }] },
 ];
 

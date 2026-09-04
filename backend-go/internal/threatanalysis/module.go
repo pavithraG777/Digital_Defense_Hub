@@ -4,38 +4,30 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/middleware"
+	"github.com/pavithraG777/cyber-security-platform/backend/internal/operational"
 )
 
-type Handler struct{}
-
-func NewHandler() *Handler {
-	return &Handler{}
+type Handler struct {
+	events  operational.EventStore
+	actions operational.ActionStore
 }
 
-func RegisterRoutes(protected *gin.RouterGroup, handler *Handler, databasePool *pgxpool.Pool) {
-	if protected == nil || handler == nil || databasePool == nil {
+func NewHandler() *Handler { return &Handler{} }
+func RegisterRoutes(p *gin.RouterGroup, h *Handler, db *pgxpool.Pool) {
+	if p == nil || h == nil || db == nil {
 		return
 	}
-
-	group := protected.Group("/threat-analysis")
-	group.GET("", middleware.RequirePermission(databasePool, "THREAT_ANALYSIS_VIEW"), handler.ListAnalyses)
-	group.GET(":id", middleware.RequirePermission(databasePool, "THREAT_ANALYSIS_VIEW"), handler.GetAnalysis)
-	group.POST("/run", middleware.RequirePermission(databasePool, "THREAT_ANALYSIS_RUN"), handler.RunAnalysis)
-	group.POST("/close", middleware.RequirePermission(databasePool, "THREAT_ANALYSIS_CLOSE"), handler.CloseAnalysis)
+	h.events = operational.EventStore{DB: db, Module: "THREAT_ANALYSIS"}
+	h.actions = operational.ActionStore{DB: db, Module: "THREAT_ANALYSIS"}
+	g := p.Group("/threat-analysis")
+	g.GET("", middleware.RequirePermission(db, "THREAT_ANALYSIS_VIEW"), h.ListAnalyses)
+	g.GET("/:id", middleware.RequirePermission(db, "THREAT_ANALYSIS_VIEW"), h.GetAnalysis)
+	g.GET("/actions", middleware.RequirePermission(db, "THREAT_ANALYSIS_VIEW"), h.ListActions)
+	g.POST("/run", middleware.RequirePermission(db, "THREAT_ANALYSIS_RUN"), h.RunAnalysis)
+	g.POST("/close", middleware.RequirePermission(db, "THREAT_ANALYSIS_CLOSE"), h.CloseAnalysis)
 }
-
-func (h *Handler) ListAnalyses(c *gin.Context) {
-	c.JSON(200, gin.H{"success": true, "data": []any{}})
-}
-
-func (h *Handler) GetAnalysis(c *gin.Context) {
-	c.JSON(200, gin.H{"success": true, "data": gin.H{"id": c.Param("id")}})
-}
-
-func (h *Handler) RunAnalysis(c *gin.Context) {
-	c.JSON(202, gin.H{"success": true, "message": "threat analysis started"})
-}
-
-func (h *Handler) CloseAnalysis(c *gin.Context) {
-	c.JSON(202, gin.H{"success": true, "message": "threat analysis closed"})
-}
+func (h *Handler) ListAnalyses(c *gin.Context)  { h.events.List(c, 0) }
+func (h *Handler) GetAnalysis(c *gin.Context)   { h.events.Get(c, c.Param("id")) }
+func (h *Handler) RunAnalysis(c *gin.Context)   { h.events.Submit(c) }
+func (h *Handler) CloseAnalysis(c *gin.Context) { h.actions.Create(c, "CLOSE_ANALYSIS") }
+func (h *Handler) ListActions(c *gin.Context)   { h.actions.List(c) }

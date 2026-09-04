@@ -105,7 +105,12 @@ function ActionDialog({ action, onClose, onCompleted }: { action: ScreenAction; 
     }
     setLoading(true);
     try {
-      const body = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, value]));
+      const jsonFields = new Set(action.fields?.filter((field) => field.type === "json").map((field) => field.name));
+      const body = Object.fromEntries(Object.entries(values).map(([key, value]) => {
+        if (!jsonFields.has(key) || !value.trim()) return [key, value];
+        try { return [key, JSON.parse(value)]; }
+        catch { throw new Error(`${action.fields?.find((field) => field.name === key)?.label || key} must contain valid JSON.`); }
+      }));
       await apiRequest(action.path, { method: action.method, body });
       onCompleted(`${action.label} completed successfully.`);
       onClose();
@@ -126,7 +131,7 @@ function ActionDialog({ action, onClose, onCompleted }: { action: ScreenAction; 
             {action.fields?.map((field) => (
               <label key={field.name} className={field.type === "textarea" ? "field-wide" : undefined}>
                 {field.label}{field.required && <span className="required-mark"> *</span>}
-                {field.type === "textarea" ? (
+                {field.type === "textarea" || field.type === "json" ? (
                   <textarea value={values[field.name] || ""} placeholder={field.placeholder} onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} required={field.required} />
                 ) : field.type === "select" ? (
                   <select value={values[field.name] || ""} onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} required={field.required}>

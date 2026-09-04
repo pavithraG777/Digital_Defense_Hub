@@ -60,7 +60,7 @@ export type ApiSource = {
 export type ActionField = {
   name: string;
   label: string;
-  type?: "text" | "email" | "password" | "number" | "textarea" | "select";
+  type?: "text" | "email" | "password" | "number" | "textarea" | "select" | "json";
   required?: boolean;
   placeholder?: string;
   options?: Array<{ label: string; value: string }>;

@@ -4,9 +4,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/middleware"
+	"github.com/pavithraG777/cyber-security-platform/backend/internal/operational"
 )
 
-type Handler struct{}
+type Handler struct{ jobs operational.AnalysisJobStore }
 
 func NewHandler() *Handler {
 	return &Handler{}
@@ -20,12 +21,16 @@ func RegisterRoutes(protected *gin.RouterGroup, handler *Handler, databasePool *
 	routeGroup := protected.Group("/copilot")
 	routeGroup.GET("/assist", middleware.RequirePermission(databasePool, "COPILOT_USE"), handler.Assist)
 	routeGroup.POST("/summarize", middleware.RequirePermission(databasePool, "COPILOT_USE"), handler.Summarize)
+	routeGroup.GET("/:id", middleware.RequirePermission(databasePool, "COPILOT_USE"), handler.GetJob)
+	handler.jobs = operational.AnalysisJobStore{DB: databasePool, Module: "SECURITY_COPILOT"}
 }
 
 func (h *Handler) Assist(c *gin.Context) {
-	c.JSON(200, gin.H{"success": true, "message": "security copilot assistance delivered"})
+	h.jobs.List(c)
 }
 
 func (h *Handler) Summarize(c *gin.Context) {
-	c.JSON(200, gin.H{"success": true, "message": "incident summary generated"})
+	h.jobs.Create(c, "INCIDENT_SUMMARY")
 }
+
+func (h *Handler) GetJob(c *gin.Context) { h.jobs.Get(c, c.Param("id")) }

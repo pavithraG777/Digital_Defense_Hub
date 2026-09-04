@@ -4,28 +4,22 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/middleware"
+	"github.com/pavithraG777/cyber-security-platform/backend/internal/operational"
 )
 
-type Handler struct{}
+type Handler struct{ events operational.EventStore }
 
-func NewHandler() *Handler {
-	return &Handler{}
-}
-
-func RegisterRoutes(protected *gin.RouterGroup, handler *Handler, databasePool *pgxpool.Pool) {
-	if protected == nil || handler == nil || databasePool == nil {
+func NewHandler() *Handler { return &Handler{} }
+func RegisterRoutes(p *gin.RouterGroup, h *Handler, db *pgxpool.Pool) {
+	if p == nil || h == nil || db == nil {
 		return
 	}
-
-	group := protected.Group("/behavior")
-	group.POST("/events", middleware.RequirePermission(databasePool, "THREAT_MANAGE"), handler.SubmitBehaviorEvent)
-	group.GET("/baselines/:user_id", middleware.RequirePermission(databasePool, "THREAT_VIEW"), handler.GetBaseline)
+	h.events = operational.EventStore{DB: db, Module: "BEHAVIOR"}
+	g := p.Group("/behavior")
+	g.POST("/events", middleware.RequirePermission(db, "THREAT_MANAGE"), h.SubmitBehaviorEvent)
+	g.GET("/events", middleware.RequirePermission(db, "THREAT_VIEW"), h.ListEvents)
+	g.GET("/baselines/:user_id", middleware.RequirePermission(db, "THREAT_VIEW"), h.GetBaseline)
 }
-
-func (h *Handler) SubmitBehaviorEvent(c *gin.Context) {
-	c.JSON(202, gin.H{"success": true, "message": "behavior event accepted"})
-}
-
-func (h *Handler) GetBaseline(c *gin.Context) {
-	c.JSON(200, gin.H{"success": true, "data": gin.H{"user_id": c.Param("user_id")}})
-}
+func (h *Handler) SubmitBehaviorEvent(c *gin.Context) { h.events.Submit(c) }
+func (h *Handler) ListEvents(c *gin.Context)          { h.events.List(c, 0) }
+func (h *Handler) GetBaseline(c *gin.Context)         { h.events.Baseline(c, c.Param("user_id")) }

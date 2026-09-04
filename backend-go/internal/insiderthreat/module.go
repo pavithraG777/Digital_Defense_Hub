@@ -4,38 +4,30 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/middleware"
+	"github.com/pavithraG777/cyber-security-platform/backend/internal/operational"
 )
 
-type Handler struct{}
-
-func NewHandler() *Handler {
-	return &Handler{}
+type Handler struct {
+	events  operational.EventStore
+	actions operational.ActionStore
 }
 
-func RegisterRoutes(protected *gin.RouterGroup, handler *Handler, databasePool *pgxpool.Pool) {
-	if protected == nil || handler == nil || databasePool == nil {
+func NewHandler() *Handler { return &Handler{} }
+func RegisterRoutes(p *gin.RouterGroup, h *Handler, db *pgxpool.Pool) {
+	if p == nil || h == nil || db == nil {
 		return
 	}
-
-	group := protected.Group("/insider-threat")
-	group.GET("", middleware.RequirePermission(databasePool, "INSIDER_THREAT_VIEW"), handler.ListCases)
-	group.GET("/:id", middleware.RequirePermission(databasePool, "INSIDER_THREAT_VIEW"), handler.GetCase)
-	group.POST("/alert", middleware.RequirePermission(databasePool, "INSIDER_THREAT_ALERT"), handler.RaiseAlert)
-	group.POST("/investigate", middleware.RequirePermission(databasePool, "INSIDER_THREAT_INVESTIGATE"), handler.InvestigateCase)
+	h.events = operational.EventStore{DB: db, Module: "INSIDER_THREAT"}
+	h.actions = operational.ActionStore{DB: db, Module: "INSIDER_THREAT"}
+	g := p.Group("/insider-threat")
+	g.GET("", middleware.RequirePermission(db, "INSIDER_THREAT_VIEW"), h.ListCases)
+	g.GET("/:id", middleware.RequirePermission(db, "INSIDER_THREAT_VIEW"), h.GetCase)
+	g.GET("/investigations", middleware.RequirePermission(db, "INSIDER_THREAT_VIEW"), h.ListInvestigations)
+	g.POST("/alert", middleware.RequirePermission(db, "INSIDER_THREAT_ALERT"), h.RaiseAlert)
+	g.POST("/investigate", middleware.RequirePermission(db, "INSIDER_THREAT_INVESTIGATE"), h.InvestigateCase)
 }
-
-func (h *Handler) ListCases(c *gin.Context) {
-	c.JSON(200, gin.H{"success": true, "data": []any{}})
-}
-
-func (h *Handler) GetCase(c *gin.Context) {
-	c.JSON(200, gin.H{"success": true, "data": gin.H{"id": c.Param("id")}})
-}
-
-func (h *Handler) RaiseAlert(c *gin.Context) {
-	c.JSON(202, gin.H{"success": true, "message": "insider threat alert raised"})
-}
-
-func (h *Handler) InvestigateCase(c *gin.Context) {
-	c.JSON(202, gin.H{"success": true, "message": "insider threat investigation started"})
-}
+func (h *Handler) ListCases(c *gin.Context)          { h.events.List(c, 0) }
+func (h *Handler) GetCase(c *gin.Context)            { h.events.Get(c, c.Param("id")) }
+func (h *Handler) RaiseAlert(c *gin.Context)         { h.events.Submit(c) }
+func (h *Handler) InvestigateCase(c *gin.Context)    { h.actions.Create(c, "INVESTIGATE") }
+func (h *Handler) ListInvestigations(c *gin.Context) { h.actions.List(c) }
