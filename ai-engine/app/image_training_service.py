@@ -102,7 +102,12 @@ def _group_stratified_indices(path, indexed, manifest, validation_percent, test_
         if relative not in rows:
             raise TrainingInputError(f"group manifest is missing image: {relative}")
         grouped[rows[relative]].append(index)
-    group_names = sorted(grouped)
+    train_only_names = {
+        name for name in grouped if name.startswith("train-only:")
+    }
+    group_names = sorted(name for name in grouped if name not in train_only_names)
+    if not group_names:
+        raise TrainingInputError("group manifest leaves no validation/test candidate groups")
     random.Random(seed).shuffle(group_names)
     validation_groups = max(1, round(len(group_names) * validation_percent / 100))
     test_groups = round(len(group_names) * test_percent / 100)

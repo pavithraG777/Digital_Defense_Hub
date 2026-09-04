@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/auth"
 )
@@ -166,6 +167,8 @@ func TestRestoreProtectedFileOwner_ReturnsOKAfterVerifyAndRestore(t *testing.T) 
 		IntegrityVerified: true,
 		RestoredAt:        time.Now().UTC().Format(time.RFC3339),
 	}
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte("password"), bcrypt.MinCost)
+	require.NoError(t, err)
 
 	service := &fakeProtectedFileService{
 		getProtectedFileFn: func(ctx context.Context, id uuid.UUID) (*ProtectedFile, error) {
@@ -193,6 +196,7 @@ func TestRestoreProtectedFileOwner_ReturnsOKAfterVerifyAndRestore(t *testing.T) 
 				OrganizationID: organizationID,
 				OfficialEmail:  "owner@example.com",
 				EmailVerified:  true,
+				PasswordHash:   string(passwordHash),
 			}, nil
 		},
 		verifyAndConsumeMFAChallengeFn: func(ctx context.Context, id uuid.UUID, emailCode, smsCode string) (*auth.MFAChallenge, error) {

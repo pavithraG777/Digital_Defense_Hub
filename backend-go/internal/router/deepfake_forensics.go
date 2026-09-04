@@ -205,6 +205,24 @@ func initializeDeepfakeForensicsModule(
 		engineClient = nil
 	}
 
+	// Model training is a long-running synchronous engine request. Keep its
+	// transport timeout aligned with ML_TRAINING_TIMEOUT instead of reusing the
+	// much shorter interactive-analysis client timeout.
+	trainingEngineClient := engineClient
+	if engineClient != nil {
+		trainingEngineClient, err = deepfakeforensics.NewEngineClient(
+			moduleConfig.EngineURL,
+			moduleConfig.ServiceToken,
+			moduleConfig.TrainingTimeout,
+		)
+		if err != nil {
+			return nil, nil, fmt.Errorf(
+				"initialize ML training engine client: %w",
+				err,
+			)
+		}
+	}
+
 	handler, err := deepfakeforensics.NewHandler(
 		assetService,
 		analysisService,
@@ -262,7 +280,7 @@ func initializeDeepfakeForensicsModule(
 
 	trainingWorker, err := deepfakeforensics.NewTrainingWorker(
 		repository,
-		engineClient,
+		trainingEngineClient,
 		logger,
 		moduleConfig.PollInterval,
 		moduleConfig.TrainingTimeout,

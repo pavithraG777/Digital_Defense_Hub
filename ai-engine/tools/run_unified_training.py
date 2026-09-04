@@ -16,7 +16,7 @@ from app.training_schemas import ImageTrainingRequest
 
 def main() -> None:
     settings = get_settings()
-    dataset_path = "E:/Cyber-Security-Platform/datasets/unified-manipulation-detection-v4-13000"
+    dataset_path = "E:/Cyber-Security-Platform/datasets/unified-manipulation-detection-v5-10000"
     path, manifest = validate_image_dataset(dataset_path, settings.training_dataset_root)
     print(f"validated records={manifest['record_count']} group_manifest={manifest.get('group_manifest')}", flush=True)
     request = ImageTrainingRequest(
