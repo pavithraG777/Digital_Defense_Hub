@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -73,6 +74,7 @@ import (
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/modelsecurity"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/networksecurity"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/notification"
+	"github.com/pavithraG777/cyber-security-platform/backend/internal/operational"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/organization"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/permission"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/persistence"
@@ -519,6 +521,37 @@ func SetupRouterWithRuntime(
 		))
 	}
 
+	// The generic operational analysis APIs persist jobs in a shared queue.
+	// This connector worker performs the AI-supported media jobs against the
+	// same authenticated offline engine used by Deepfake Forensics.
+	var operationalMediaClient operational.MediaConnector
+	if cfg.DeepfakeForensics.Enabled {
+		mediaClient, connectorErr := deepfakeforensics.NewEngineClient(
+			cfg.DeepfakeForensics.EngineURL,
+			cfg.DeepfakeForensics.ServiceToken,
+			cfg.DeepfakeForensics.EngineTimeout,
+		)
+		if connectorErr != nil {
+			panic(fmt.Errorf("initialize operational media connector: %w", connectorErr))
+		}
+		operationalMediaClient = mediaClient
+	}
+	connectorRoots := []string{cfg.DeepfakeForensics.StoragePath, cfg.Storage.UploadPath}
+	if configuredRoots := strings.TrimSpace(viper.GetString("OPERATIONAL_CONNECTOR_ALLOWED_ROOTS")); configuredRoots != "" {
+		connectorRoots = append(connectorRoots, filepath.SplitList(configuredRoots)...)
+	}
+	connectorWorker, connectorErr := operational.NewConnectorWorker(
+		db.Pool, operationalMediaClient, connectorRoots,
+		cfg.DeepfakeForensics.PollInterval, cfg.DeepfakeForensics.AnalysisTimeout,
+		cfg.DeepfakeForensics.ProcessingNode+"-operational", appLogger.Log,
+	)
+	if connectorErr != nil {
+		panic(fmt.Errorf("initialize operational connector worker: %w", connectorErr))
+	}
+	if connectorErr = connectorWorker.Start(context.Background()); connectorErr != nil {
+		panic(fmt.Errorf("start operational connector worker: %w", connectorErr))
+	}
+
 	threatNotificationPublisher, publisherErr :=
 		newSecurityNotificationPublisher(
 			notificationModule.SecurityNotifications,
@@ -746,6 +779,7 @@ func SetupRouterWithRuntime(
 	responseHandler := response.NewHandler()
 	accessControlHandler := accesscontrol.NewHandler()
 	securityOperationsHandler := securityoperations.NewHandler()
+	securityOperationsHandler.SetConnectorWorker(connectorWorker)
 	securityMonitoringHandler := securitymonitoring.NewHandler()
 	dataExfiltrationHandler := dataexfiltration.NewHandler()
 	incidentManagementHandler := incidentmanagement.NewHandler()

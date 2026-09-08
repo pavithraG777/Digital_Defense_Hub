@@ -8,11 +8,13 @@ import (
 )
 
 type Handler struct {
-	actions  operational.ActionStore
-	executor operational.AnalysisExecutorStore
+	actions    operational.ActionStore
+	executor   operational.AnalysisExecutorStore
+	connectors *operational.ConnectorWorker
 }
 
-func NewHandler() *Handler { return &Handler{} }
+func NewHandler() *Handler                                                { return &Handler{} }
+func (h *Handler) SetConnectorWorker(worker *operational.ConnectorWorker) { h.connectors = worker }
 func RegisterRoutes(p *gin.RouterGroup, h *Handler, db *pgxpool.Pool) {
 	if p == nil || h == nil || db == nil {
 		return
@@ -20,6 +22,7 @@ func RegisterRoutes(p *gin.RouterGroup, h *Handler, db *pgxpool.Pool) {
 	h.actions = operational.ActionStore{DB: db, Module: "SECURITY_OPERATIONS"}
 	h.executor = operational.AnalysisExecutorStore{DB: db}
 	g := p.Group("/security-operations")
+	g.GET("/connectors/health", middleware.RequirePermission(db, "SECURITY_OPERATIONS_VIEW"), h.ConnectorHealth)
 	g.POST("/analysis-jobs/claim", middleware.RequirePermission(db, "SECURITY_OPERATIONS_EXECUTE"), h.ClaimAnalysisJob)
 	g.POST("/analysis-jobs/:id/heartbeat", middleware.RequirePermission(db, "SECURITY_OPERATIONS_EXECUTE"), h.HeartbeatAnalysisJob)
 	g.POST("/analysis-jobs/:id/result", middleware.RequirePermission(db, "SECURITY_OPERATIONS_EXECUTE"), h.CompleteAnalysisJob)
@@ -39,3 +42,10 @@ func (h *Handler) HeartbeatAnalysisJob(c *gin.Context) { h.executor.Heartbeat(c)
 func (h *Handler) CompleteAnalysisJob(c *gin.Context)  { h.executor.Complete(c) }
 func (h *Handler) RetryAnalysisJob(c *gin.Context)     { h.executor.Transition(c, true) }
 func (h *Handler) CancelAnalysisJob(c *gin.Context)    { h.executor.Transition(c, false) }
+func (h *Handler) ConnectorHealth(c *gin.Context) {
+	if h.connectors == nil {
+		c.JSON(503, gin.H{"success": false, "message": "Operational connector worker is unavailable"})
+		return
+	}
+	c.JSON(200, gin.H{"success": true, "data": h.connectors.Status()})
+}

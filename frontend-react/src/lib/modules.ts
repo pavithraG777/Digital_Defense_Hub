@@ -312,7 +312,7 @@ export const modules: ModuleDefinition[] = [
       connected("integrations", "SIEM and ticket integrations", "Outbound requests waiting for an authorized integration executor.", [live("requests", "Integration requests", "/integration/requests")]),
       connected("incident-analytics", "Incident analytics", "Snapshots calculated from canonical incident records.", [live("analytics", "Incident analytics", "/incident-analytics", "/incident-analytics/:id")]),
       connected("incident-lifecycle", "Incident lifecycle views", "Canonical incident records projected for each authorized response stage.", [live("triage", "Triage", "/incident-triage"), live("orchestration", "Orchestration", "/incident-orchestration"), live("remediation", "Remediation", "/incident-remediation"), live("resolution", "Resolution", "/incident-resolution"), live("review", "Review", "/incident-review"), live("closure", "Closure", "/incident-closure"), live("reporting", "Reporting", "/incident-reporting"), live("learning", "Learning", "/incident-learning"), live("after-action", "After action", "/incident-after-action")]),
-      connected("operations", "Security operations", "Audited operational action requests.", [live("operations", "Operations", "/security-operations", "/security-operations/:id")]),
+      connected("operations", "Security operations", "Audited operational action requests and real connector readiness.", [live("health", "Connector readiness", "/security-operations/connectors/health"), live("operations", "Operations", "/security-operations", "/security-operations/:id")]),
     ],
   },
   {

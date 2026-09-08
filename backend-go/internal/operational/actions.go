@@ -17,32 +17,37 @@ type ActionRequest struct {
 	Parameters map[string]any `json:"parameters"`
 }
 type Action struct {
-	ID          uuid.UUID      `json:"id"`
-	Module      string         `json:"module"`
-	TargetType  string         `json:"target_type"`
-	TargetID    string         `json:"target_id"`
-	ActionType  string         `json:"action_type"`
-	Status      string         `json:"status"`
-	Reason      string         `json:"reason"`
-	Parameters  map[string]any `json:"parameters"`
-	Result      map[string]any `json:"result"`
-	RequestedBy uuid.UUID      `json:"requested_by"`
-	RequestedAt time.Time      `json:"requested_at"`
-	CompletedBy *uuid.UUID     `json:"completed_by,omitempty"`
-	CompletedAt *time.Time     `json:"completed_at,omitempty"`
+	ID           uuid.UUID      `json:"id"`
+	Module       string         `json:"module"`
+	TargetType   string         `json:"target_type"`
+	TargetID     string         `json:"target_id"`
+	ActionType   string         `json:"action_type"`
+	Status       string         `json:"status"`
+	Reason       string         `json:"reason"`
+	Parameters   map[string]any `json:"parameters"`
+	Result       map[string]any `json:"result"`
+	RequestedBy  uuid.UUID      `json:"requested_by"`
+	RequestedAt  time.Time      `json:"requested_at"`
+	CompletedBy  *uuid.UUID     `json:"completed_by,omitempty"`
+	CompletedAt  *time.Time     `json:"completed_at,omitempty"`
+	WorkerID     *string        `json:"worker_id,omitempty"`
+	LeaseExpires *time.Time     `json:"lease_expires_at,omitempty"`
+	AttemptCount int            `json:"attempt_count"`
+	ErrorCode    *string        `json:"error_code,omitempty"`
+	ErrorMessage *string        `json:"error_message,omitempty"`
 }
 type ActionStore struct {
 	DB     *pgxpool.Pool
 	Module string
 }
 
-const actionColumns = `id,module,target_type,target_id,action_type,status,reason,parameters,result,requested_by,requested_at,completed_by,completed_at`
+const actionColumns = `id,module,target_type,target_id,action_type,status,reason,parameters,result,requested_by,requested_at,completed_by,completed_at,worker_id,lease_expires_at,attempt_count,error_code,error_message`
 
 type actionScanner interface{ Scan(...any) error }
 
 func scanAction(s actionScanner) (Action, error) {
 	var v Action
-	err := s.Scan(&v.ID, &v.Module, &v.TargetType, &v.TargetID, &v.ActionType, &v.Status, &v.Reason, &v.Parameters, &v.Result, &v.RequestedBy, &v.RequestedAt, &v.CompletedBy, &v.CompletedAt)
+	err := s.Scan(&v.ID, &v.Module, &v.TargetType, &v.TargetID, &v.ActionType, &v.Status, &v.Reason, &v.Parameters, &v.Result, &v.RequestedBy, &v.RequestedAt, &v.CompletedBy, &v.CompletedAt, &v.WorkerID, &v.LeaseExpires, &v.AttemptCount, &v.ErrorCode, &v.ErrorMessage)
 	return v, err
 }
 func (s ActionStore) Create(c *gin.Context, forcedAction string) {
