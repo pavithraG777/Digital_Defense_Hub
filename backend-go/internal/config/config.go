@@ -1,7 +1,6 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -363,15 +362,9 @@ func Load() (*Config, error) {
 
 	setConfigurationDefaults()
 
-	if err := viper.ReadInConfig(); err != nil {
-		var configFileNotFound viper.ConfigFileNotFoundError
-		if !errors.As(err, &configFileNotFound) {
-			return nil, fmt.Errorf(
-				"unable to load .env file: %w",
-				err,
-			)
-		}
-	}
+	// Local development may provide .env; hosted deployments use injected
+	// environment variables and do not need a file on disk.
+	_ = viper.ReadInConfig()
 
 	accessTokenDuration, err :=
 		loadConfigurationDuration(
