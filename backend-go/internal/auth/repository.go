@@ -613,13 +613,12 @@ func (r *Repository) GetActiveRoleCodes(
 		WHERE
 			ur.user_id = $1
 			AND ur.status = 'ACTIVE'
-			AND ur.is_active = TRUE
 			AND r.status = 'ACTIVE'
 			AND r.deleted_at IS NULL
 			AND ur.valid_from <= timezone('UTC', CURRENT_TIMESTAMP)
 			AND (
-				ur.expires_at IS NULL
-				OR ur.expires_at > timezone('UTC', CURRENT_TIMESTAMP)
+				ur.valid_until IS NULL
+				OR ur.valid_until > timezone('UTC', CURRENT_TIMESTAMP)
 			)
 		ORDER BY
 			ur.is_primary DESC,
