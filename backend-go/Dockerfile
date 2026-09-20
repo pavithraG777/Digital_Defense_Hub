@@ -13,7 +13,8 @@ FROM alpine:3.22
 RUN adduser -D -H -s /sbin/nologin ddh
 WORKDIR /app
 COPY --from=build /out/ddh-api /app/ddh-api
-RUN chown ddh:ddh /app/ddh-api
+RUN mkdir -p /app/storage /app/uploads /app/runtime-logs \
+	&& chown -R ddh:ddh /app
 USER ddh
 
 EXPOSE 10000
