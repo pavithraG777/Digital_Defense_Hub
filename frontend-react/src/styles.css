@@ -356,11 +356,12 @@ button.secondary { border: 0; background: rgba(255,255,255,0.08); color: white; 
   .auth-options { align-items: flex-start; }
 }
 
-.mfa-auth-shell { grid-template-columns: 1fr; }
+.mfa-auth-shell { grid-template-columns: minmax(360px, 1.05fr) minmax(440px, 0.95fr); }
 .mfa-auth-shell .auth-panel { min-height: calc(100vh - 58px); }
 .mfa-card { width: min(100%, 620px); }
 .mfa-method-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .mfa-method-grid.single-method { grid-template-columns: 1fr; }
+.mfa-intro { min-height: calc(100vh - 58px); }
 .mfa-method {
   min-height: 76px;
   display: flex;
@@ -373,6 +374,11 @@ button.secondary { border: 0; background: rgba(255,255,255,0.08); color: white; 
   border-radius: 9px;
   background: rgba(4, 17, 31, 0.58);
   cursor: pointer;
+}
+
+@media (max-width: 900px) {
+  .mfa-auth-shell { grid-template-columns: 1fr; }
+  .mfa-auth-shell .mfa-intro { min-height: auto; }
 }
 .mfa-method span { display: flex; flex-direction: column; gap: 4px; }
 .mfa-method strong { color: #e8f3ff; font-size: 0.85rem; }

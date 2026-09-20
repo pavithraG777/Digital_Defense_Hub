@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import type { CSSProperties } from "react";
 import { ArrowLeft, KeyRound, Mail, ShieldCheck, Smartphone } from "lucide-react";
 import type { LoginResult } from "../types";
 import { api, session } from "../lib/api";
 import { safeReturnTo } from "../lib/auth-navigation";
+import { AuthLiveBackground } from "../components/AuthLiveBackground";
 import { MFA_CHALLENGE_STORAGE_KEY } from "./LoginPage";
 
 type MFAMethod = "EMAIL" | "TOTP" | "RECOVERY";
@@ -56,14 +58,29 @@ export function MfaPage() {
       const result = await api.post<LoginResult>("/auth/mfa/verify", { mfa_challenge_id: challenge.id, ...credential });
       sessionStorage.removeItem(MFA_CHALLENGE_STORAGE_KEY);
       session.setLogin(result);
-      navigate(result.user.must_change_password ? "/change-password" : replacementRequested ? "/mfa/setup" : safeReturnTo(challenge.returnTo));
+      // An EMAIL-only challenge means this account has MFA enabled but no
+      // authenticator secret yet. Complete the one-time QR enrollment in the
+      // application so future sign-ins offer both Email OTP and TOTP.
+      const authenticatorEnrollmentRequired = challenge.type === "EMAIL";
+      if (authenticatorEnrollmentRequired) {
+        sessionStorage.setItem("ddh.authenticator-enrollment-required", "true");
+      }
+      navigate(
+        result.user.must_change_password
+          ? "/change-password"
+          : replacementRequested || authenticatorEnrollmentRequired
+            ? "/mfa/setup"
+            : safeReturnTo(challenge.returnTo),
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "MFA verification failed.");
     } finally { setLoading(false); }
   }
 
   const methodDescription = method === "EMAIL"
-    ? "Enter the six-digit OTP sent to your verified official email."
+    ? replacementRequested
+      ? "Verify your official email once; the new Google Authenticator QR code opens next."
+      : "Enter the six-digit OTP sent to your verified official email."
     : method === "TOTP"
       ? "Enter the current six-digit code shown in Google Authenticator."
       : "Enter one unused recovery code generated during MFA enrollment.";
@@ -72,14 +89,20 @@ export function MfaPage() {
     chooseMethod("EMAIL", true);
   }
 
+  const authBackground = `url("${import.meta.env.BASE_URL}branding/auth-identity-background.png")`;
+
   return (
-    <main className="auth-shell compact-auth-shell mfa-auth-shell">
+    <main className="auth-shell auth-shell-login mfa-auth-shell" style={{ "--auth-background-image": authBackground } as CSSProperties & { "--auth-background-image": string }}>
+      <AuthLiveBackground />
+      <section className="auth-intro mfa-intro" aria-hidden="true" />
       <section className="auth-panel auth-panel-centered">
         <form className="login-card mfa-card" onSubmit={handleSubmit}>
           <div className="auth-card-heading"><span className="auth-card-logo"><ShieldCheck size={34} /></span><p className="eyebrow">MULTI-FACTOR VERIFICATION</p><h2>Choose a verification method</h2><p className="muted">Select the OTP method you prefer for this sign-in.</p></div>
-          <div className={`mfa-method-grid${supportsTOTP ? "" : " single-method"}`} role="radiogroup" aria-label="Verification method">
-            <button className={`mfa-method${method === "EMAIL" ? " selected" : ""}`} type="button" role="radio" aria-checked={method === "EMAIL"} onClick={() => chooseMethod("EMAIL")}><Mail size={21} /><span><strong>Email OTP</strong><small>Code sent to official email</small></span></button>
-            {supportsTOTP && <button className={`mfa-method${method === "TOTP" ? " selected" : ""}`} type="button" role="radio" aria-checked={method === "TOTP"} onClick={() => chooseMethod("TOTP")}><Smartphone size={21} /><span><strong>Google Authenticator</strong><small>Code from authenticator app</small></span></button>}
+          <div className="mfa-method-grid" role="radiogroup" aria-label="Verification method">
+            <button className={`mfa-method${method === "EMAIL" && !replacementRequested ? " selected" : ""}`} type="button" role="radio" aria-checked={method === "EMAIL" && !replacementRequested} onClick={() => chooseMethod("EMAIL")}><Mail size={21} /><span><strong>Email OTP</strong><small>Code sent to official email</small></span></button>
+            {supportsTOTP
+              ? <button className={`mfa-method${method === "TOTP" ? " selected" : ""}`} type="button" role="radio" aria-checked={method === "TOTP"} onClick={() => chooseMethod("TOTP")}><Smartphone size={21} /><span><strong>Google Authenticator</strong><small>Code from authenticator app</small></span></button>
+              : <button className={`mfa-method${replacementRequested ? " selected" : ""}`} type="button" role="radio" aria-checked={replacementRequested} onClick={requestNewAuthenticator}><Smartphone size={21} /><span><strong>Set up Google Authenticator</strong><small>Verify email, then scan a new QR</small></span></button>}
           </div>
           <p className="mfa-method-description">{methodDescription} {expired ? "This challenge has expired." : `Expires in ${countdown}.`}</p>
           {expired && <div className="alert alert-error" role="alert">This verification challenge has expired. Return to sign in to request a new one.</div>}
