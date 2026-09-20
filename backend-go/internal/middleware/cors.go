@@ -12,6 +12,8 @@ func CORS() gin.HandlerFunc {
 		AllowOrigins: []string{
 			"http://localhost:3000",
 			"http://localhost:5173",
+			"http://localhost:4173",
+			"https://pavithrag777.github.io",
 		},
 		AllowMethods: []string{
 			"GET",

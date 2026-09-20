@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { FormEvent } from "react";
+import type { CSSProperties, FormEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Eye, EyeOff, KeyRound, LockKeyhole, ShieldCheck, UserRound } from "lucide-react";
 import type { LoginMFAResponse, LoginResult } from "../types";
@@ -25,6 +25,7 @@ export function LoginPage() {
   const [loading, setLoading] = useState(false);
   const returnTo = safeReturnTo((location.state as { from?: unknown } | null)?.from);
   const notice = typeof (location.state as { notice?: unknown } | null)?.notice === "string" ? (location.state as { notice: string }).notice : null;
+  const authBackground = `url("${import.meta.env.BASE_URL}branding/auth-identity-background.png")`;
 
   useEffect(() => {
     if (!session.getTokens()) return;
@@ -50,6 +51,9 @@ export function LoginPage() {
         return;
       }
       session.setLogin(result);
+      if (!result.user.mfa_enabled) {
+        sessionStorage.setItem("ddh.authenticator-enrollment-required", "true");
+      }
       navigate(result.user.must_change_password ? "/change-password" : !result.user.mfa_enabled ? "/mfa/setup" : returnTo);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to sign in. Please try again.");
@@ -59,7 +63,7 @@ export function LoginPage() {
   }
 
   return (
-    <main className="auth-shell auth-shell-login">
+    <main className="auth-shell auth-shell-login" style={{ "--auth-background-image": authBackground } as CSSProperties & { "--auth-background-image": string }}>
       <AuthLiveBackground />
       <section className="auth-intro" aria-label="Digital Defense Hub security">
         <BrandLogo className="auth-brand" />
