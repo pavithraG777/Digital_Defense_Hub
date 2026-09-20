@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -363,10 +364,13 @@ func Load() (*Config, error) {
 	setConfigurationDefaults()
 
 	if err := viper.ReadInConfig(); err != nil {
-		return nil, fmt.Errorf(
-			"unable to load .env file: %w",
-			err,
-		)
+		var configFileNotFound viper.ConfigFileNotFoundError
+		if !errors.As(err, &configFileNotFound) {
+			return nil, fmt.Errorf(
+				"unable to load .env file: %w",
+				err,
+			)
+		}
 	}
 
 	accessTokenDuration, err :=
