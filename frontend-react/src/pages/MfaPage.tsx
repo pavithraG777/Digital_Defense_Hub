@@ -7,6 +7,7 @@ import type { LoginResult } from "../types";
 import { api, session } from "../lib/api";
 import { safeReturnTo } from "../lib/auth-navigation";
 import { AuthLiveBackground } from "../components/AuthLiveBackground";
+import { BrandLogo } from "../components/BrandLogo";
 import { MFA_CHALLENGE_STORAGE_KEY } from "./LoginPage";
 
 type MFAMethod = "EMAIL" | "TOTP" | "RECOVERY";
@@ -94,7 +95,14 @@ export function MfaPage() {
   return (
     <main className="auth-shell auth-shell-login mfa-auth-shell" style={{ "--auth-background-image": authBackground } as CSSProperties & { "--auth-background-image": string }}>
       <AuthLiveBackground />
-      <section className="auth-intro mfa-intro" aria-hidden="true" />
+      <section className="auth-intro mfa-intro" aria-label="Digital Defense Hub security">
+        <BrandLogo className="auth-brand" />
+        <div className="auth-copy">
+          <p className="eyebrow">PROTECTED ACCESS</p>
+          <h1>Verify your identity.</h1>
+          <p>Email OTP and Google Authenticator protect every Digital Defense Hub session.</p>
+        </div>
+      </section>
       <section className="auth-panel auth-panel-centered">
         <form className="login-card mfa-card" onSubmit={handleSubmit}>
           <div className="auth-card-heading"><span className="auth-card-logo"><ShieldCheck size={34} /></span><p className="eyebrow">MULTI-FACTOR VERIFICATION</p><h2>Choose a verification method</h2><p className="muted">Select the OTP method you prefer for this sign-in.</p></div>
