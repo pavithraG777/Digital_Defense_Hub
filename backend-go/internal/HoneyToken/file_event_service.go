@@ -3,11 +3,13 @@ package honeytoken
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -675,6 +677,99 @@ func (s *FileEventService) CreateFileEvent(
 	return nil, ErrFileEventCodeExists
 }
 
+// SimulateCanaryAccess records a clearly-labelled unauthorized-access event
+// for UI demonstrations. It deliberately uses TEST-NET-2 (RFC 5737), so the
+// generated address cannot be mistaken for an observed endpoint address.
+func (s *FileEventService) SimulateCanaryAccess(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	applicationUserID uuid.UUID,
+	canaryID string,
+) (*SimulateCanaryAccessResponse, error) {
+	return s.SimulateCanaryEvent(ctx, organizationID, applicationUserID, canaryID, "OPENED")
+}
+
+// SimulateCanaryEvent records a labelled OPENED, MODIFIED, RENAMED, or
+// DELETED Canary event without touching the physical decoy file.
+func (s *FileEventService) SimulateCanaryEvent(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	applicationUserID uuid.UUID,
+	canaryID string,
+	eventType string,
+) (*SimulateCanaryAccessResponse, error) {
+	eventType = strings.ToUpper(strings.TrimSpace(eventType))
+	switch eventType {
+	case "OPENED", "MODIFIED", "RENAMED", "DELETED":
+	default:
+		return nil, ErrInvalidFileEventRequest
+	}
+
+	parsedCanaryID, err := parseCanaryRequiredUUID(canaryID, "canary file ID")
+	if err != nil {
+		return nil, ErrInvalidFileEventRequest
+	}
+
+	canary, err := s.repository.FindCanaryFileByID(ctx, organizationID, parsedCanaryID)
+	if err != nil {
+		if errors.Is(err, ErrCanaryFileNotFound) {
+			return nil, ErrFileEventCanaryNotFound
+		}
+		return nil, err
+	}
+
+	host, err := rand.Int(rand.Reader, big.NewInt(244))
+	if err != nil {
+		return nil, fmt.Errorf("generate simulated source IP: %w", err)
+	}
+	simulatedIP := fmt.Sprintf("198.51.100.%d", host.Int64()+10)
+	simulationID := uuid.NewString()
+	processName := "unknown-process (simulation)"
+	systemUsername := "unknown-user (simulation)"
+	deviceName := "Unrecognized device (simulation)"
+	deviceIdentifier := "SIM-" + strings.ToUpper(strings.ReplaceAll(simulationID, "-", "")[:12])
+	detectionMethod := DetectionMethodRuleBased
+	fileExtension := canary.FileExtension
+	mimeType := canary.MimeType
+	metadata, _ := json.Marshal(map[string]any{
+		"simulation":          true,
+		"simulation_id":       simulationID,
+		"simulated_source_ip": simulatedIP,
+		"operation":           eventType,
+		"access_decision":     "DENIED",
+		"reason":              "SOURCE_IP_NOT_IN_OWNER_ALLOWLIST",
+	})
+
+	filePath := canary.FilePath
+	if strings.TrimSpace(filePath) == "" {
+		filePath = path.Join("canary-simulation", canary.CanaryCode, canary.FileName)
+	}
+	canaryIDValue := parsedCanaryID.String()
+	event, err := s.CreateFileEvent(ctx, organizationID, &applicationUserID, simulatedIP, CreateFileEventRequest{
+		CanaryFileID:     &canaryIDValue,
+		SourceType:       "CANARY_FILE",
+		EventType:        eventType,
+		EventSource:      "MANUAL",
+		DetectionMethod:  &detectionMethod,
+		FileName:         canary.FileName,
+		FilePath:         filePath,
+		FileExtension:    fileExtension,
+		MimeType:         mimeType,
+		ProcessName:      &processName,
+		SystemUsername:   &systemUsername,
+		DeviceName:       &deviceName,
+		DeviceIdentifier: &deviceIdentifier,
+		Metadata:         metadata,
+		RawEvent:         metadata,
+		OccurredAt:       time.Now().UTC().Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &SimulateCanaryAccessResponse{Event: event, SimulatedSourceIP: simulatedIP, Simulation: true}, nil
+}
+
 func (s *FileEventService) GetFileEvent(
 	ctx context.Context,
 	organizationID uuid.UUID,
@@ -705,6 +800,8 @@ func (s *FileEventService) GetFileEvent(
 func (s *FileEventService) ListFileEvents(
 	ctx context.Context,
 	organizationID uuid.UUID,
+	includePlatformOwned bool,
+	includeTenantAdminOwned bool,
 	request ListFileEventsRequest,
 ) (*ListFileEventsResponse, error) {
 	if organizationID == uuid.Nil {
@@ -813,19 +910,21 @@ func (s *FileEventService) ListFileEvents(
 		s.repository.ListFileEvents(
 			ctx,
 			FileEventListFilter{
-				OrganizationID: organizationID,
-				DepartmentID:   departmentID,
-				HoneytokenID:   honeytokenID,
-				CanaryFileID:   canaryFileID,
-				SourceType:     sourceType,
-				EventType:      eventType,
-				Severity:       severity,
-				Status:         status,
-				IsSuspicious:   request.IsSuspicious,
-				From:           from,
-				To:             to,
-				Limit:          pageSize,
-				Offset:         (page - 1) * pageSize,
+				OrganizationID:          organizationID,
+				IncludePlatformOwned:    includePlatformOwned,
+				IncludeTenantAdminOwned: includeTenantAdminOwned,
+				DepartmentID:            departmentID,
+				HoneytokenID:            honeytokenID,
+				CanaryFileID:            canaryFileID,
+				SourceType:              sourceType,
+				EventType:               eventType,
+				Severity:                severity,
+				Status:                  status,
+				IsSuspicious:            request.IsSuspicious,
+				From:                    from,
+				To:                      to,
+				Limit:                   pageSize,
+				Offset:                  (page - 1) * pageSize,
 			},
 		)
 	if err != nil {

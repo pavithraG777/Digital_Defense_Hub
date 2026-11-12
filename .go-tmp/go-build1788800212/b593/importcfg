@@ -1,0 +1,9 @@
+# import config
+packagefile context=E:\Cyber-Security-Platform\.go-cache\76\76977c433d435d1632c8f09f48e594cd348a36f238f3e2a29e52c314f1b2844c-d
+packagefile github.com/google/uuid=E:\Cyber-Security-Platform\.go-cache\00\006eda183de63b82bf91c7bc25e11c93eaf9a8fc89c9b9e31b7494f8208e3598-d
+packagefile github.com/jackc/pgx/v5/pgxpool=E:\Cyber-Security-Platform\.go-cache\11\114ddf7b98bc57464789fefce1f1815077a12efbfa2f789752709f82ce782397-d
+packagefile github.com/pavithraG777/cyber-security-platform/backend/internal/baseline=E:\Cyber-Security-Platform\.go-cache\16\165c16ceedd9f18ac0a31f508e4056e3d4b3a306e4d06a3340e79247343ecfa2-d
+packagefile github.com/pavithraG777/cyber-security-platform/backend/internal/threatcorrelation=E:\Cyber-Security-Platform\.go-tmp\go-build1788800212\b594\_pkg_.a
+packagefile os=E:\Cyber-Security-Platform\.go-cache\a7\a7e3b665e44f95bd58ca75ece283818b051b219f971a719e983043395129de18-d
+packagefile testing=E:\Cyber-Security-Platform\.go-cache\f9\f912a4df5d2560c9f5490f5f3dc9a1fe5af9a498ca7931c79139916171f02118-d
+packagefile time=E:\Cyber-Security-Platform\.go-cache\1d\1db5c6c7c7250afa2625739855ee03f9b52bee00335d87be637ab0e50511ffbf-d

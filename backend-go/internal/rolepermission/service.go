@@ -19,6 +19,7 @@ func NewService(repository *Repository) *Service {
 
 func (s *Service) AssignPermissions(
 	ctx context.Context,
+	organizationID uuid.UUID,
 	roleID uuid.UUID,
 	grantedBy *uuid.UUID,
 	req AssignPermissionsRequest,
@@ -56,6 +57,7 @@ func (s *Service) AssignPermissions(
 
 	return s.repository.AssignPermissions(
 		ctx,
+		organizationID,
 		roleID,
 		grantedBy,
 		req,
@@ -64,6 +66,7 @@ func (s *Service) AssignPermissions(
 
 func (s *Service) ListRolePermissions(
 	ctx context.Context,
+	organizationID uuid.UUID,
 	roleID uuid.UUID,
 ) (*ListRolePermissionsResponse, error) {
 
@@ -73,18 +76,21 @@ func (s *Service) ListRolePermissions(
 
 	return s.repository.ListRolePermissions(
 		ctx,
+		organizationID,
 		roleID,
 	)
 }
 
 func (s *Service) RemovePermission(
 	ctx context.Context,
+	organizationID uuid.UUID,
 	roleID uuid.UUID,
 	permissionID uuid.UUID,
 ) error {
 
 	return s.repository.RemovePermission(
 		ctx,
+		organizationID,
 		roleID,
 		permissionID,
 	)
@@ -92,6 +98,7 @@ func (s *Service) RemovePermission(
 
 func (s *Service) ReplacePermissions(
 	ctx context.Context,
+	organizationID uuid.UUID,
 	roleID uuid.UUID,
 	grantedBy *uuid.UUID,
 	req ReplacePermissionsRequest,
@@ -99,6 +106,7 @@ func (s *Service) ReplacePermissions(
 
 	return s.repository.ReplacePermissions(
 		ctx,
+		organizationID,
 		roleID,
 		grantedBy,
 		req,

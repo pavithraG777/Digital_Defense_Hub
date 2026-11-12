@@ -351,8 +351,24 @@ func (r *Repository) ListForUser(
 	}
 
 	conditions := []string{
-		"n.organization_id = $1",
-		"nr.organization_id = $1",
+		`(n.organization_id = $1 OR EXISTS (
+                        SELECT 1 FROM user_roles sur
+                        INNER JOIN roles sr ON sr.id = sur.role_id
+                        WHERE sur.user_id = $2 AND sur.is_active = TRUE
+                          AND sr.organization_id = $1
+                          AND sr.deleted_at IS NULL
+                          AND UPPER(sur.status) = 'ACTIVE'
+                          AND UPPER(sr.role_code) = 'SUPER_ADMIN'
+                ))`,
+		`(nr.organization_id = $1 OR EXISTS (
+                        SELECT 1 FROM user_roles sur
+                        INNER JOIN roles sr ON sr.id = sur.role_id
+                        WHERE sur.user_id = $2 AND sur.is_active = TRUE
+                          AND sr.organization_id = $1
+                          AND sr.deleted_at IS NULL
+                          AND UPPER(sur.status) = 'ACTIVE'
+                          AND UPPER(sr.role_code) = 'SUPER_ADMIN'
+                ))`,
 		"nr.user_id = $2",
 		"nr.recipient_type = 'USER'",
 		"n.deleted_at IS NULL",
@@ -476,7 +492,15 @@ func (r *Repository) ListForUser(
 			ON n.id = nr.notification_id
 			AND n.organization_id = nr.organization_id
 		WHERE
-			nr.organization_id = $1
+                        (nr.organization_id = $1 OR EXISTS (
+                                SELECT 1 FROM user_roles sur
+                                INNER JOIN roles sr ON sr.id = sur.role_id
+                                WHERE sur.user_id = $2 AND sur.is_active = TRUE
+                                  AND sr.organization_id = $1
+                                  AND sr.deleted_at IS NULL
+                                  AND UPPER(sur.status) = 'ACTIVE'
+                                  AND UPPER(sr.role_code) = 'SUPER_ADMIN'
+                        ))
 			AND nr.user_id = $2
 			AND nr.recipient_type = 'USER'
 			AND nr.in_app_status = 'UNREAD'

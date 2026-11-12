@@ -8,7 +8,12 @@ import numpy as np
 
 os.environ.setdefault("AI_RISK_SERVICE_TOKEN", "12345678901234567890123456789012")
 
-from app.image_training_service import binary_classification_metrics, validate_image_dataset
+from app.image_training_service import (
+    _group_stratified_indices,
+    _category_balanced_training_weights,
+    binary_classification_metrics,
+    validate_image_dataset,
+)
 from app.media_model_runner import MediaModelRunner
 from app.training_schemas import ImageTrainingRequest
 
@@ -37,6 +42,72 @@ def test_validate_image_dataset_accepts_deepfake_class_name() -> None:
 
         assert candidate == dataset_dir.resolve()
         assert manifest["classes"] == ["authentic", "deepfake"]
+
+
+def test_explicit_split_manifest_is_used_exactly() -> None:
+    class Indexed:
+        samples = [
+            ("", 0), ("", 1), ("", 0),
+            ("", 1), ("", 0), ("", 1),
+        ]
+        targets = [0, 1, 0, 1, 0, 1]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        relative_paths = [
+            "authentic/train.jpg", "deepfake/train.jpg",
+            "authentic/validation.jpg", "deepfake/validation.jpg",
+            "authentic/test.jpg", "deepfake/test.jpg",
+        ]
+        Indexed.samples = [(str(root / relative), label) for relative, label in zip(relative_paths, Indexed.targets)]
+        (root / "split.csv").write_text(
+            "relative_path,split\n"
+            + "\n".join(
+                f"{relative},{split}"
+                for relative, split in zip(
+                    relative_paths,
+                    ["train", "train", "validation", "validation", "test", "test"],
+                )
+            ),
+            encoding="utf-8",
+        )
+
+        train, validation, test = _group_stratified_indices(
+            root, Indexed(), {"split_manifest": "split.csv"}, 15, 15, 42
+        )
+
+        assert train == [0, 1]
+        assert validation == [2, 3]
+        assert test == [4, 5]
+
+
+def test_training_weights_balance_classes_and_source_categories() -> None:
+    class Indexed:
+        targets = [0, 0, 0, 1, 1]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        relative_paths = [
+            "authentic/coco-1.jpg", "authentic/coco-2.jpg", "authentic/legacy.jpg",
+            "deepfake/legacy.jpg", "deepfake/modern.jpg",
+        ]
+        Indexed.samples = [(str(root / relative), label) for relative, label in zip(relative_paths, Indexed.targets)]
+        (root / "provenance.csv").write_text(
+            "relative_path,category\n"
+            "authentic/coco-1.jpg,coco\n"
+            "authentic/coco-2.jpg,coco\n"
+            "authentic/legacy.jpg,legacy_real\n"
+            "deepfake/legacy.jpg,legacy_ai\n"
+            "deepfake/modern.jpg,modern_ai\n",
+            encoding="utf-8",
+        )
+
+        weights = _category_balanced_training_weights(
+            root, Indexed(), {"provenance_manifest": "provenance.csv"}, list(range(5))
+        )
+
+        assert weights == [0.25, 0.25, 0.5, 0.5, 0.5]
+        assert sum(weights[:3]) == sum(weights[3:]) == 1.0
 
 
 def test_model_runner_loads_ddh_training_checkpoint() -> None:

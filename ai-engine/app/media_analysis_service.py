@@ -13,6 +13,7 @@ from app.media_forensics_runtime import (
     get_media_runtime,
 )
 from app.media_forensics_schemas import (
+    DeepfakeAssessment,
     MediaAnalysisRequest,
     MediaAnalysisResponse,
 )
@@ -228,15 +229,27 @@ class MediaAnalysisService:
             "DEEPFAKE_IMAGE_DETECTION",
             "AI_GENERATED_IMAGE_DETECTION",
         }:
-            assessment, runtime, warnings = (
-                self._image_analyzer.analyze_deepfake(
+            ensemble_models = request.models or ([request.model] if request.model else [])
+            if len(ensemble_models) <= 1:
+                assessment, runtime, warnings = self._image_analyzer.analyze_deepfake(
                     source_path,
-                    model=request.model,
-                    visualization_path=(
-                        visualization_path
-                    ),
+                    model=ensemble_models[0] if ensemble_models else None,
+                    visualization_path=visualization_path,
                 )
-            )
+            else:
+                results = [
+                    self._image_analyzer.analyze_deepfake(
+                        source_path,
+                        model=model,
+                        visualization_path=visualization_path if index == 0 else None,
+                    )
+                    for index, model in enumerate(ensemble_models)
+                ]
+                assessment = self._combine_image_ensemble(
+                    [value[0] for value in results], ensemble_models
+                )
+                runtime = "ENSEMBLE[" + ",".join(value[1] for value in results) + "]"
+                warnings = [warning for value in results for warning in value[2]]
             return (
                 runtime,
                 warnings,
@@ -360,6 +373,104 @@ class MediaAnalysisService:
             f"unsupported analysis job type: {request.job_type}"
         )
 
+    @staticmethod
+    def _combine_image_ensemble(assessments, models) -> DeepfakeAssessment:
+        severity = {
+            "AUTHENTIC": 0,
+            "LIKELY_AUTHENTIC": 1,
+            "SUSPICIOUS": 2,
+            "LIKELY_DEEPFAKE": 3,
+            "DEEPFAKE": 4,
+        }
+        def face_applicable(assessment) -> bool:
+            features = assessment.feature_data or {}
+            width, height = features.get("width"), features.get("height")
+            faces = features.get("faces")
+            if not (assessment.faces_detected or 0):
+                return False
+            if not isinstance(width, (int, float)) or not isinstance(height, (int, float)) or not isinstance(faces, list):
+                return True  # Legacy results have no bounding boxes.
+            image_area = width * height
+            if image_area <= 0:
+                return False
+            return any(
+                isinstance(face, dict)
+                and isinstance(face.get("width"), (int, float))
+                and isinstance(face.get("height"), (int, float))
+                and face["width"] * face["height"] / image_area >= 0.02
+                for face in faces
+            )
+
+        applied = [
+            str(model.configuration.get("ensemble_role", "")).upper() != "FACE_SWAP"
+            or face_applicable(assessment)
+            for assessment, model in zip(assessments, models)
+        ]
+        applicable_indices = [
+            index
+            for index, is_applied in enumerate(applied)
+            if is_applied
+        ] or list(range(len(assessments)))
+        selected_index = max(
+            applicable_indices,
+            key=lambda index: (
+                severity[assessments[index].detection_result],
+                assessments[index].deepfake_probability,
+            ),
+        )
+        selected = assessments[selected_index]
+        components = []
+        signals = []
+        for index, (assessment, model) in enumerate(zip(assessments, models)):
+            role = str(
+                model.configuration.get(
+                    "ensemble_role", model.model_name
+                )
+            )
+            components.append(
+                {
+                    "role": role,
+                    "applied": applied[index],
+                    "verdict": assessment.detection_result,
+                    "deepfake_probability": assessment.deepfake_probability,
+                    "confidence_score": assessment.confidence_score,
+                    "threshold": model.confidence_threshold,
+                }
+            )
+            if applied[index]:
+                signals.extend(assessment.signals)
+        feature_data = dict(selected.feature_data)
+        feature_data["ensemble_components"] = components
+        positive = {"LIKELY_DEEPFAKE", "DEEPFAKE"}
+        negative = {"AUTHENTIC", "LIKELY_AUTHENTIC"}
+        verdicts = {assessments[index].detection_result for index in applicable_indices}
+        disagreement = bool(verdicts & positive and verdicts & negative)
+        feature_data["ensemble_disagreement"] = disagreement
+        if disagreement:
+            return selected.model_copy(
+                update={
+                    "detection_result": "SUSPICIOUS",
+                    "confidence_score": min(selected.confidence_score, 60.0),
+                    "signals": signals,
+                    "feature_data": feature_data,
+                    "detection_summary": (
+                        "Specialized image detectors disagree; human review is required. "
+                        "The displayed probability is the highest-risk component, "
+                        "not an ensemble consensus."
+                    ),
+                }
+            )
+        return selected.model_copy(
+            update={
+                "signals": signals,
+                "feature_data": feature_data,
+                "detection_summary": (
+                    f"Ensemble verdict {selected.detection_result} was selected "
+                    f"from {len(applicable_indices)} applicable specialized image detectors."
+                ),
+            }
+        )
+
     def _validate_request_compatibility(
         self,
         request: MediaAnalysisRequest,
@@ -460,6 +571,19 @@ class MediaAnalysisService:
     @staticmethod
     def _normalize_runtime(runtime: str) -> str:
         normalized = str(runtime).strip().upper()
+        if normalized.startswith("ENSEMBLE[") and normalized.endswith("]"):
+            components = {
+                value.strip()
+                for value in normalized[9:-1].split(",")
+                if value.strip()
+            }
+            if components == {"PYTORCH"}:
+                return "PYTORCH"
+            if components == {"ONNX_RUNTIME"}:
+                return "ONNX_RUNTIME"
+            if "HEURISTIC_FALLBACK" in components:
+                return "HEURISTIC_FALLBACK"
+            return "HYBRID"
         mapping = {
             "PYTORCH": "PYTORCH",
             "TORCH": "PYTORCH",

@@ -1,0 +1,10 @@
+# test log
+getenv GOTMPDIR
+open E:\Cyber-Security-Platform\.go-tmp\TestConnectorWorkerAuthorizedPathRejectsOutsideRoot57954920\001\sample.bin
+open E:\Cyber-Security-Platform\.go-tmp
+getenv GOTMPDIR
+open E:\Cyber-Security-Platform\.go-tmp\TestEmailConnectorParsesEvidenceWithoutInventingVerdict4046384141\001\message.eml
+stat E:\Cyber-Security-Platform\.go-tmp\TestEmailConnectorParsesEvidenceWithoutInventingVerdict4046384141\001\message.eml
+open E:\Cyber-Security-Platform\.go-tmp\TestEmailConnectorParsesEvidenceWithoutInventingVerdict4046384141\001\message.eml
+open E:\Cyber-Security-Platform\.go-tmp\TestEmailConnectorParsesEvidenceWithoutInventingVerdict4046384141\001\message.eml
+open E:\Cyber-Security-Platform\.go-tmp

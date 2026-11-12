@@ -71,8 +71,8 @@ def main() -> None:
     destination = args.destination.resolve()
     if destination.exists() and any(destination.iterdir()):
         raise SystemExit(f"destination must be empty: {destination}")
-    if not 1 <= args.frames_per_group <= 4:
-        raise SystemExit("frames per group must be between 1 and 4")
+    if not 1 <= args.frames_per_group <= 16:
+        raise SystemExit("frames per group must be between 1 and 16")
 
     original_dir = video_root / "original_sequences" / "youtube" / "c40" / "videos"
     deepfake_dir = video_root / "manipulated_sequences" / "Deepfakes" / "c40" / "videos"
@@ -101,7 +101,9 @@ def main() -> None:
         groups.append((canonical, first, second))
 
     detector = load_detector()
-    fractions = (0.04, 0.07, 0.10, 0.13, 0.16, 0.19, 0.22, 0.25)
+    # Cover the video rather than sampling only its early window. Extra
+    # candidates allow a group to survive occasional decode/face failures.
+    fractions = tuple(0.04 + index * (0.88 / 31) for index in range(32))
     rows: list[dict[str, str]] = []
     relative_paths: list[str] = []
     retained_groups = 0
@@ -185,7 +187,7 @@ def main() -> None:
             "excluded_holdout_groups": sorted(holdout_groups),
             "rejected_incomplete_groups": rejected_groups,
             "source": str(video_root),
-            "preprocessing": "EARLY_WINDOW_FACE_CONTEXT_CROP_V2",
+            "preprocessing": "TEMPORALLY_DISTRIBUTED_FACE_CONTEXT_CROP_V3",
             "context_scale": args.context_scale,
             "codec_corruption_validation": "PASS",
             "face_fallback_count": 0,

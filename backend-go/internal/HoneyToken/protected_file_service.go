@@ -268,6 +268,16 @@ func (s *Service) GetProtectedFile(
 	return file, nil
 }
 
+func (s *Service) ListProtectedFiles(ctx context.Context, organizationID uuid.UUID) ([]ProtectedFile, error) {
+	if err := s.validateDependencies(); err != nil {
+		return nil, err
+	}
+	if organizationID == uuid.Nil {
+		return nil, errors.New("organization ID is required")
+	}
+	return s.repository.ListProtectedFiles(ctx, organizationID)
+}
+
 func (s *Service) validateDependencies() error {
 	if s == nil {
 		return fmt.Errorf("protected file service is required")

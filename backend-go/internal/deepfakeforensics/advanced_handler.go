@@ -416,20 +416,25 @@ func (h *Handler) UploadManagedAIModel(
 	defer uploadedFile.Close()
 
 	request := UploadAIModelRequest{
-		ModelCode:           strings.TrimSpace(c.PostForm("model_code")),
-		ModelName:           strings.TrimSpace(c.PostForm("model_name")),
-		ModelType:           strings.TrimSpace(c.PostForm("model_type")),
-		Framework:           strings.TrimSpace(c.PostForm("framework")),
-		VersionNumber:       strings.TrimSpace(c.PostForm("version_number")),
-		Description:         strings.TrimSpace(c.PostForm("description")),
-		SupportsCPU:         parseBoolForm(c.PostForm("supports_cpu")),
-		SupportsGPU:         parseBoolForm(c.PostForm("supports_gpu")),
-		ConfidenceThreshold: parseFloatForm(c.PostForm("confidence_threshold")),
-		TrainingDatasetName: strings.TrimSpace(c.PostForm("training_dataset_name")),
-		ValidationAccuracy:  parseFloatForm(c.PostForm("validation_accuracy")),
-		PrecisionScore:      parseFloatForm(c.PostForm("precision_score")),
-		RecallScore:         parseFloatForm(c.PostForm("recall_score")),
-		F1Score:             parseFloatForm(c.PostForm("f1_score")),
+		ModelCode:              strings.TrimSpace(c.PostForm("model_code")),
+		ModelName:              strings.TrimSpace(c.PostForm("model_name")),
+		ModelType:              strings.TrimSpace(c.PostForm("model_type")),
+		Framework:              strings.TrimSpace(c.PostForm("framework")),
+		VersionNumber:          strings.TrimSpace(c.PostForm("version_number")),
+		Description:            strings.TrimSpace(c.PostForm("description")),
+		SupportsCPU:            parseBoolForm(c.PostForm("supports_cpu")),
+		SupportsGPU:            parseBoolForm(c.PostForm("supports_gpu")),
+		ConfidenceThreshold:    parseFloatForm(c.PostForm("confidence_threshold")),
+		CalibratedThreshold:    parseBoolForm(c.PostForm("calibrated_threshold")),
+		ModelProbabilityWeight: parseFloatForm(c.PostForm("model_probability_weight")),
+		EnsembleRole:           c.PostForm("ensemble_role"),
+		Preprocessing:          c.PostForm("preprocessing"),
+		ContextScale:           parseFloatForm(c.PostForm("context_scale")),
+		TrainingDatasetName:    strings.TrimSpace(c.PostForm("training_dataset_name")),
+		ValidationAccuracy:     parseFloatForm(c.PostForm("validation_accuracy")),
+		PrecisionScore:         parseFloatForm(c.PostForm("precision_score")),
+		RecallScore:            parseFloatForm(c.PostForm("recall_score")),
+		F1Score:                parseFloatForm(c.PostForm("f1_score")),
 	}
 
 	result, err := h.modelService.UploadModel(c.Request.Context(), organizationID, userID, request, uploadedFile, fileHeader.Filename)
@@ -472,13 +477,18 @@ func (h *Handler) UploadManagedAIModelVersion(
 	defer uploadedFile.Close()
 
 	request := UploadAIModelVersionRequest{
-		VersionNumber:       strings.TrimSpace(c.PostForm("version_number")),
-		TrainingDatasetName: strings.TrimSpace(c.PostForm("training_dataset_name")),
-		ValidationAccuracy:  parseFloatForm(c.PostForm("validation_accuracy")),
-		PrecisionScore:      parseFloatForm(c.PostForm("precision_score")),
-		RecallScore:         parseFloatForm(c.PostForm("recall_score")),
-		F1Score:             parseFloatForm(c.PostForm("f1_score")),
-		ConfidenceThreshold: parseFloatForm(c.PostForm("confidence_threshold")),
+		VersionNumber:          strings.TrimSpace(c.PostForm("version_number")),
+		TrainingDatasetName:    strings.TrimSpace(c.PostForm("training_dataset_name")),
+		ValidationAccuracy:     parseFloatForm(c.PostForm("validation_accuracy")),
+		PrecisionScore:         parseFloatForm(c.PostForm("precision_score")),
+		RecallScore:            parseFloatForm(c.PostForm("recall_score")),
+		F1Score:                parseFloatForm(c.PostForm("f1_score")),
+		ConfidenceThreshold:    parseFloatForm(c.PostForm("confidence_threshold")),
+		CalibratedThreshold:    parseBoolForm(c.PostForm("calibrated_threshold")),
+		ModelProbabilityWeight: parseFloatForm(c.PostForm("model_probability_weight")),
+		EnsembleRole:           c.PostForm("ensemble_role"),
+		Preprocessing:          c.PostForm("preprocessing"),
+		ContextScale:           parseFloatForm(c.PostForm("context_scale")),
 	}
 
 	result, err := h.modelService.UploadModelVersion(c.Request.Context(), organizationID, userID, modelID, request, uploadedFile, fileHeader.Filename)

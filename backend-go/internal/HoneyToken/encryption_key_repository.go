@@ -162,6 +162,24 @@ func (r *Repository) FindActiveEncryptionKey(
 	return &key, nil
 }
 
+func (r *Repository) ListEncryptionKeys(ctx context.Context, organizationID uuid.UUID) ([]EncryptionKey, error) {
+	const query = `SELECT id,organization_id,key_name,key_identifier,encrypted_key,algorithm,key_size,purpose,status,activated_at,expired_at,created_at,updated_at,deleted_at FROM encryption_keys WHERE organization_id=$1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 100`
+	rows, err := r.db.Query(ctx, query, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list encryption keys: %w", err)
+	}
+	defer rows.Close()
+	keys := make([]EncryptionKey, 0)
+	for rows.Next() {
+		var key EncryptionKey
+		if err = rows.Scan(&key.ID, &key.OrganizationID, &key.KeyName, &key.KeyIdentifier, &key.EncryptedKey, &key.Algorithm, &key.KeySize, &key.Purpose, &key.Status, &key.ActivatedAt, &key.ExpiredAt, &key.CreatedAt, &key.UpdatedAt, &key.DeletedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan encryption key: %w", err)
+		}
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
+}
+
 func (r *Repository) DeactivateEncryptionKeys(
 	ctx context.Context,
 	organizationID uuid.UUID,

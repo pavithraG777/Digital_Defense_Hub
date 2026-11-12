@@ -14,6 +14,7 @@ func RegisterInvestigationCaseRoutes(protected *gin.RouterGroup, handler *Invest
 		panic(errors.New("investigation case route dependencies are required"))
 	}
 	cases := protected.Group("/investigation-cases")
+	cases.Use(middleware.RequireOrganizationTypeOrSuperAdmin(db, "POLICE", "FORENSIC_LAB", "GOVERNMENT", "DEFENCE", "CYBERSECURITY_PROVIDER"))
 	manage := middleware.RequirePermission(db, permissionOrganizationManageSecurity)
 	view := middleware.RequirePermission(db, permissionHoneytokenView)
 	cases.POST("", manage, handler.Create)

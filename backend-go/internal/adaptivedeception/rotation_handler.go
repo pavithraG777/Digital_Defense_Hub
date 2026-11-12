@@ -183,6 +183,24 @@ func (h *RotationHandler) GetRotation(
 	)
 }
 
+func (h *RotationHandler) ListRotations(c *gin.Context) {
+	if !h.isAvailable() {
+		response.InternalServerError(c, "Canary rotation handler is unavailable", nil)
+		return
+	}
+	organizationID, ok := adaptiveContextUUID(c, "organization_id")
+	if !ok {
+		response.Unauthorized(c, "Organization information is missing", nil)
+		return
+	}
+	rotations, err := h.service.ListRotations(c.Request.Context(), organizationID)
+	if err != nil {
+		handleCanaryRotationError(c, err)
+		return
+	}
+	response.OK(c, "Canary rotation history retrieved successfully", rotations)
+}
+
 func (h *RotationHandler) isAvailable() bool {
 	return h != nil &&
 		h.service != nil

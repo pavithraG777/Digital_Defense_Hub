@@ -125,30 +125,40 @@ type ActivateAIModelVersionRequest struct {
 }
 
 type UploadAIModelRequest struct {
-	ModelCode           string  `form:"model_code"`
-	ModelName           string  `form:"model_name"`
-	ModelType           string  `form:"model_type"`
-	Framework           string  `form:"framework"`
-	VersionNumber       string  `form:"version_number"`
-	Description         string  `form:"description"`
-	SupportsCPU         bool    `form:"supports_cpu"`
-	SupportsGPU         bool    `form:"supports_gpu"`
-	ConfidenceThreshold float64 `form:"confidence_threshold"`
-	TrainingDatasetName string  `form:"training_dataset_name"`
-	ValidationAccuracy  float64 `form:"validation_accuracy"`
-	PrecisionScore      float64 `form:"precision_score"`
-	RecallScore         float64 `form:"recall_score"`
-	F1Score             float64 `form:"f1_score"`
+	ModelCode              string  `form:"model_code"`
+	ModelName              string  `form:"model_name"`
+	ModelType              string  `form:"model_type"`
+	Framework              string  `form:"framework"`
+	VersionNumber          string  `form:"version_number"`
+	Description            string  `form:"description"`
+	SupportsCPU            bool    `form:"supports_cpu"`
+	SupportsGPU            bool    `form:"supports_gpu"`
+	ConfidenceThreshold    float64 `form:"confidence_threshold"`
+	CalibratedThreshold    bool    `form:"calibrated_threshold"`
+	ModelProbabilityWeight float64 `form:"model_probability_weight"`
+	EnsembleRole           string  `form:"ensemble_role"`
+	Preprocessing          string  `form:"preprocessing"`
+	ContextScale           float64 `form:"context_scale"`
+	TrainingDatasetName    string  `form:"training_dataset_name"`
+	ValidationAccuracy     float64 `form:"validation_accuracy"`
+	PrecisionScore         float64 `form:"precision_score"`
+	RecallScore            float64 `form:"recall_score"`
+	F1Score                float64 `form:"f1_score"`
 }
 
 type UploadAIModelVersionRequest struct {
-	VersionNumber       string  `form:"version_number"`
-	TrainingDatasetName string  `form:"training_dataset_name"`
-	ValidationAccuracy  float64 `form:"validation_accuracy"`
-	PrecisionScore      float64 `form:"precision_score"`
-	RecallScore         float64 `form:"recall_score"`
-	F1Score             float64 `form:"f1_score"`
-	ConfidenceThreshold float64 `form:"confidence_threshold"`
+	VersionNumber          string  `form:"version_number"`
+	TrainingDatasetName    string  `form:"training_dataset_name"`
+	ValidationAccuracy     float64 `form:"validation_accuracy"`
+	PrecisionScore         float64 `form:"precision_score"`
+	RecallScore            float64 `form:"recall_score"`
+	F1Score                float64 `form:"f1_score"`
+	ConfidenceThreshold    float64 `form:"confidence_threshold"`
+	CalibratedThreshold    bool    `form:"calibrated_threshold"`
+	ModelProbabilityWeight float64 `form:"model_probability_weight"`
+	EnsembleRole           string  `form:"ensemble_role"`
+	Preprocessing          string  `form:"preprocessing"`
+	ContextScale           float64 `form:"context_scale"`
 }
 
 type RollbackAIModelVersionRequest struct {
@@ -166,6 +176,18 @@ type AssignAIModelVersionRequest struct {
 type ModelManagementService struct {
 	repository       *Repository
 	modelStorageRoot string
+}
+
+func validEnsembleConfiguration(role, preprocessing string, contextScale float64) bool {
+	role = NormalizeConstant(role)
+	preprocessing = NormalizeConstant(preprocessing)
+	if role != "" && role != "WHOLE_IMAGE_AI" && role != "FACE_SWAP" {
+		return false
+	}
+	if preprocessing != "" && preprocessing != "WHOLE_IMAGE_RGB_V1" && preprocessing != "FACE_CONTEXT_CROP_V1" {
+		return false
+	}
+	return contextScale == 0 || (contextScale >= 1.25 && contextScale <= 4)
 }
 
 func NewModelManagementService(
@@ -204,6 +226,9 @@ func (s *ModelManagementService) UploadModel(
 	if strings.TrimSpace(request.VersionNumber) == "" {
 		request.VersionNumber = "1.0.0"
 	}
+	if request.ConfidenceThreshold < 0 || request.ConfidenceThreshold > 100 || request.ModelProbabilityWeight < 0 || request.ModelProbabilityWeight > 1 || !validEnsembleConfiguration(request.EnsembleRole, request.Preprocessing, request.ContextScale) {
+		return nil, ErrInvalidRepositoryInput
+	}
 
 	modelType := NormalizeConstant(request.ModelType)
 	if !IsSupportedJobType(modelType) {
@@ -234,12 +259,19 @@ func (s *ModelManagementService) UploadModel(
 	createdAt := time.Now().UTC()
 	inputType, outputType := inferModelIO(modelType)
 	configuration := map[string]any{
-		"uploaded_via_api":     true,
-		"uploaded_file_name":   filename,
-		"stored_relative_path": storedRelativePath,
-		"supports_cpu":         request.SupportsCPU,
-		"supports_gpu":         request.SupportsGPU,
-		"confidence_threshold": request.ConfidenceThreshold,
+		"uploaded_via_api":              true,
+		"uploaded_file_name":            filename,
+		"stored_relative_path":          storedRelativePath,
+		"supports_cpu":                  request.SupportsCPU,
+		"supports_gpu":                  request.SupportsGPU,
+		"confidence_threshold":          request.ConfidenceThreshold,
+		"calibrated_decision_threshold": request.CalibratedThreshold,
+		"model_probability_weight":      request.ModelProbabilityWeight,
+		"ensemble_role":                 NormalizeConstant(request.EnsembleRole),
+		"preprocessing":                 NormalizeConstant(request.Preprocessing),
+	}
+	if request.ContextScale > 0 {
+		configuration["context_scale"] = request.ContextScale
 	}
 	configurationJSON, err := json.Marshal(configuration)
 	if err != nil {
@@ -381,6 +413,9 @@ func (s *ModelManagementService) UploadModelVersion(
 	if strings.TrimSpace(request.VersionNumber) == "" {
 		return nil, ErrInvalidRepositoryInput
 	}
+	if request.ConfidenceThreshold < 0 || request.ConfidenceThreshold > 100 || request.ModelProbabilityWeight < 0 || request.ModelProbabilityWeight > 1 || !validEnsembleConfiguration(request.EnsembleRole, request.Preprocessing, request.ContextScale) {
+		return nil, ErrInvalidRepositoryInput
+	}
 	if err := validateModelArtifactExtension(originalFileName); err != nil {
 		return nil, err
 	}
@@ -402,10 +437,17 @@ func (s *ModelManagementService) UploadModelVersion(
 	versionID := uuid.New()
 	createdAt := time.Now().UTC()
 	configuration := map[string]any{
-		"uploaded_via_api":     true,
-		"uploaded_file_name":   originalFileName,
-		"stored_relative_path": storedRelativePath,
-		"confidence_threshold": request.ConfidenceThreshold,
+		"uploaded_via_api":              true,
+		"uploaded_file_name":            originalFileName,
+		"stored_relative_path":          storedRelativePath,
+		"confidence_threshold":          request.ConfidenceThreshold,
+		"calibrated_decision_threshold": request.CalibratedThreshold,
+		"model_probability_weight":      request.ModelProbabilityWeight,
+		"ensemble_role":                 NormalizeConstant(request.EnsembleRole),
+		"preprocessing":                 NormalizeConstant(request.Preprocessing),
+	}
+	if request.ContextScale > 0 {
+		configuration["context_scale"] = request.ContextScale
 	}
 	configurationJSON, err := json.Marshal(configuration)
 	if err != nil {
@@ -542,10 +584,11 @@ func (s *ModelManagementService) AssignModelVersion(
 	_, err = s.repository.databasePool.Exec(ctx, `
 		UPDATE ai_model_versions
 		SET is_default = false,
+			status = CASE WHEN status = 'ACTIVE' THEN 'VALIDATED' ELSE status END,
 			updated_at = $3
 		WHERE ai_model_id = $1
 			AND id <> $2
-			AND is_default = true
+			AND (is_default = true OR status = 'ACTIVE')
 	`, modelID, versionID, createdAt)
 	if err != nil {
 		return nil, fmt.Errorf("clear prior default AI model version: %w", err)
@@ -1162,22 +1205,20 @@ func (r *Repository) ActivateManagedAIModelVersion(
 		return err
 	}
 
-	if previousModelStatus == analysisModelStatusActive &&
-		previousVersionStatus == analysisModelVersionStatusActive &&
-		alreadyDefault {
-		return tx.Commit(ctx)
-	}
-
 	if _, err = tx.Exec(
 		ctx,
 		`
 			UPDATE ai_model_versions
 			SET
 				is_default = false,
+				status = CASE
+					WHEN status = 'ACTIVE' THEN 'VALIDATED'
+					ELSE status
+				END,
 				updated_at = CURRENT_TIMESTAMP
 			WHERE ai_model_id = $1
 				AND id <> $2
-				AND is_default = true
+				AND (is_default = true OR status = 'ACTIVE')
 		`,
 		modelID,
 		versionID,

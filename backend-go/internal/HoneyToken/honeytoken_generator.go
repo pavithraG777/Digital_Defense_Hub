@@ -177,6 +177,46 @@ func (g *HoneytokenGenerator) Generate(
 	return result, nil
 }
 
+// ProtectExisting encrypts and fingerprints an operator-supplied value using
+// the same tenant-bound cryptographic envelope as generated decoys.
+func (g *HoneytokenGenerator) ProtectExisting(ctx context.Context, organizationID, honeytokenID uuid.UUID, honeytokenType, value string) (*honeytokenGenerationResult, error) {
+	if err := g.validate(); err != nil {
+		return nil, err
+	}
+	if err := validateHoneytokenGeneratorContext(ctx); err != nil {
+		return nil, err
+	}
+	if organizationID == uuid.Nil || honeytokenID == uuid.Nil {
+		return nil, fmt.Errorf("organization and honeytoken IDs are required")
+	}
+	honeytokenType = strings.ToUpper(strings.TrimSpace(honeytokenType))
+	if !isSupportedHoneytokenType(honeytokenType) {
+		return nil, fmt.Errorf("unsupported honeytoken type: %s", honeytokenType)
+	}
+	plainValue := []byte(strings.TrimSpace(value))
+	if len(plainValue) < 4 || len(plainValue) > 8192 {
+		clear(plainValue)
+		return nil, fmt.Errorf("protected value must contain between 4 and 8192 characters")
+	}
+	resolvedKey, err := g.encryptionKeys.resolveActiveFileEncryptionKey(ctx, organizationID)
+	if err != nil {
+		clear(plainValue)
+		return nil, fmt.Errorf("failed to resolve honeytoken encryption key: %w", err)
+	}
+	if resolvedKey == nil {
+		clear(plainValue)
+		return nil, fmt.Errorf("honeytoken encryption key resolution returned an empty result")
+	}
+	defer resolvedKey.destroy()
+	authenticatedData := buildHoneytokenAuthenticatedData(organizationID, honeytokenID, honeytokenType, resolvedKey.id)
+	encryptedValue, err := encryptHoneytokenValue(resolvedKey.keyMaterial, resolvedKey.id, plainValue, authenticatedData)
+	if err != nil {
+		clear(plainValue)
+		return nil, err
+	}
+	return &honeytokenGenerationResult{plainValue: plainValue, encryptedValue: encryptedValue, valueHash: calculateHoneytokenValueHash(resolvedKey.keyMaterial, plainValue, authenticatedData), valuePrefix: buildHoneytokenValuePrefix(plainValue)}, nil
+}
+
 // ValidateValue performs constant-time validation of a candidate value
 // without decrypting or exposing the stored decoy value.
 func (g *HoneytokenGenerator) ValidateValue(

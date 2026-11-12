@@ -3,6 +3,7 @@ package role
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -130,6 +131,7 @@ func (h *Handler) ListRoles(c *gin.Context) {
 	result, err := h.service.ListRoles(
 		c.Request.Context(),
 		organizationID,
+		roleContextIsSuperAdmin(c),
 		req,
 	)
 	if err != nil {
@@ -147,6 +149,23 @@ func (h *Handler) ListRoles(c *gin.Context) {
 		"Roles retrieved successfully",
 		result,
 	)
+}
+
+func roleContextIsSuperAdmin(c *gin.Context) bool {
+	value, ok := c.Get("roles")
+	if !ok {
+		return false
+	}
+	roles, ok := value.([]string)
+	if !ok {
+		return false
+	}
+	for _, roleCode := range roles {
+		if strings.EqualFold(strings.TrimSpace(roleCode), "SUPER_ADMIN") {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Handler) GetRoleByID(c *gin.Context) {

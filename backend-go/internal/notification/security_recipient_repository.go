@@ -64,7 +64,19 @@ func (r *Repository) ListSecurityNotificationRecipients(
 		FROM users AS u
 		LEFT JOIN user_profiles AS up
 			ON up.user_id = u.id
-		WHERE u.organization_id = $1
+                WHERE (
+                        u.organization_id = $1
+                        OR EXISTS (
+                                SELECT 1 FROM user_roles sur
+                                INNER JOIN roles sr ON sr.id = sur.role_id
+                                WHERE sur.user_id = u.id
+                                  AND sr.organization_id = u.organization_id
+                                  AND sr.deleted_at IS NULL
+                                  AND sur.is_active = TRUE
+                                  AND UPPER(sur.status) = 'ACTIVE'
+                                  AND UPPER(sr.role_code) = 'SUPER_ADMIN'
+                        )
+                )
 			AND u.deleted_at IS NULL
 			AND UPPER(u.account_status) = 'ACTIVE'
 			AND EXISTS (
@@ -85,6 +97,7 @@ func (r *Repository) ListSecurityNotificationRecipients(
 					ON p.id = rp.permission_id
 					AND UPPER(p.status) = 'ACTIVE'
 				WHERE ur.user_id = u.id
+					AND r.organization_id = u.organization_id
 					AND ur.is_active = TRUE
 					AND UPPER(ur.status) = 'ACTIVE'
 					AND ur.valid_from <=
@@ -100,9 +113,7 @@ func (r *Repository) ListSecurityNotificationRecipients(
 						OR UPPER(
 							p.permission_code
 						) IN (
-							'ORGANIZATION_MANAGE_SECURITY',
-							'THREAT_VIEW',
-							'INCIDENT_VIEW'
+                                                        'ORGANIZATION_MANAGE_SECURITY'
 						)
 					)
 			)

@@ -86,6 +86,7 @@ import (
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/response"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/risk"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/role"
+	"github.com/pavithraG777/cyber-security-platform/backend/internal/roleapproval"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/rolepermission"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/securityevents"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/securitygraph"
@@ -104,6 +105,7 @@ import (
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/usb"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/user"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/useractivity"
+	"github.com/pavithraG777/cyber-security-platform/backend/internal/userpreferences"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/userrole"
 	"github.com/pavithraG777/cyber-security-platform/backend/internal/vulnerability"
 )
@@ -440,6 +442,9 @@ func SetupRouterWithRuntime(
 	threatWorker.SetIncidentAutomationService(
 		incidentAutomationService,
 	)
+	threatWorker.SetForensicReportGenerator(
+		forensicReportGenerator{service: dfirService},
+	)
 	attackStoryRepository, attackStoryRepositoryErr := attackstory.NewRepository(db.Pool)
 	if attackStoryRepositoryErr != nil {
 		panic(fmt.Errorf("failed to initialize automatic attack story repository: %w", attackStoryRepositoryErr))
@@ -536,7 +541,11 @@ func SetupRouterWithRuntime(
 		}
 		operationalMediaClient = mediaClient
 	}
-	connectorRoots := []string{cfg.DeepfakeForensics.StoragePath, cfg.Storage.UploadPath}
+	connectorRoots := []string{
+		cfg.DeepfakeForensics.StoragePath,
+		cfg.Storage.UploadPath,
+		filepath.Join("storage", "analysis-uploads"),
+	}
 	if configuredRoots := strings.TrimSpace(viper.GetString("OPERATIONAL_CONNECTOR_ALLOWED_ROOTS")); configuredRoots != "" {
 		connectorRoots = append(connectorRoots, filepath.SplitList(configuredRoots)...)
 	}
@@ -610,6 +619,8 @@ func SetupRouterWithRuntime(
 	{
 		authGroup.POST("/login", authHandler.Login)
 		authGroup.POST("/mfa/verify", authHandler.VerifyMFA)
+		authGroup.POST("/forgot-password", authHandler.ForgotPassword)
+		authGroup.POST("/reset-password", authHandler.ResetPassword)
 
 		authGroup.POST(
 			"/refresh",
@@ -625,6 +636,7 @@ func SetupRouterWithRuntime(
 	// Public tenant onboarding. Applications remain PENDING until a super
 	// administrator explicitly approves them.
 	v1.POST("/organizations/register", organizationHandler.Register)
+	honeytoken.RegisterHoneytokenObservationRoutes(v1, honeytokenHandler)
 
 	// Protected routes
 	protected := v1.Group("")
@@ -756,6 +768,8 @@ func SetupRouterWithRuntime(
 		notificationModule.Handler,
 		db.Pool,
 	)
+	userpreferences.RegisterRoutes(protected, db.Pool)
+	roleapproval.RegisterRoutes(protected, db.Pool, func(permission string) gin.HandlerFunc { return middleware.RequirePermission(db.Pool, permission) })
 
 	syncqueue.RegisterRoutes(protected, db.Pool)
 	securityevents.RegisterRoutes(protected, db.Pool)
@@ -823,7 +837,6 @@ func SetupRouterWithRuntime(
 	networkSecurityHandler := networksecurity.NewHandler()
 	attackSurfaceHandler := attacksurface.NewHandler()
 	insiderThreatHandler := insiderthreat.NewHandler()
-	ransomwareHandler := ransomware.NewHandler()
 	riskHandler := risk.NewHandler()
 	policyHandler := policy.NewHandler()
 	surveillanceHandler := surveillance.NewHandler()
@@ -891,7 +904,7 @@ func SetupRouterWithRuntime(
 	networksecurity.RegisterRoutes(protected, networkSecurityHandler, db.Pool)
 	attacksurface.RegisterRoutes(protected, attackSurfaceHandler, db.Pool)
 	insiderthreat.RegisterRoutes(protected, insiderThreatHandler, db.Pool)
-	ransomware.RegisterRoutes(protected, ransomwareHandler, db.Pool)
+	ransomware.RegisterRoutes(protected, preEncryptionHandler, db.Pool)
 	risk.RegisterRoutes(protected, riskHandler, db.Pool)
 	securityscore.RegisterRoutes(protected, db.Pool)
 	policy.RegisterRoutes(protected, policyHandler, db.Pool)
@@ -928,22 +941,12 @@ func SetupRouterWithRuntime(
 				authHandler.ChangePassword,
 			)
 
-			protected.POST(
-				"/auth/forgot-password",
-				authHandler.ForgotPassword,
-			)
-
-			protected.POST(
-				"/auth/reset-password",
-				authHandler.ResetPassword,
-			)
-
 			admin := protected.Group("/admin")
-			admin.GET("/organizations", middleware.RequirePermission(db.Pool, "ORGANIZATION_MANAGE"), organizationHandler.List)
-			admin.POST("/organizations", middleware.RequirePermission(db.Pool, "ORGANIZATION_MANAGE"), organizationHandler.Create)
-			admin.PUT("/organizations/:id/approve", middleware.RequirePermission(db.Pool, "ORGANIZATION_MANAGE"), organizationHandler.Approve)
-			admin.PUT("/organizations/:id/reject", middleware.RequirePermission(db.Pool, "ORGANIZATION_MANAGE"), organizationHandler.Reject)
-			admin.GET("/organizations/:id/history", middleware.RequirePermission(db.Pool, "ORGANIZATION_MANAGE"), organizationHandler.History)
+			admin.GET("/organizations", middleware.RequireAnyPermission(db.Pool, "ORGANIZATION_VIEW", "ORGANIZATION_MANAGE_SECURITY"), organizationHandler.List)
+			admin.POST("/organizations", middleware.RequirePermission(db.Pool, "ORGANIZATION_MANAGE"), middleware.RequireSuperAdmin(), organizationHandler.Create)
+			admin.PUT("/organizations/:id/approve", middleware.RequirePermission(db.Pool, "ORGANIZATION_MANAGE"), middleware.RequireSuperAdmin(), organizationHandler.Approve)
+			admin.PUT("/organizations/:id/reject", middleware.RequirePermission(db.Pool, "ORGANIZATION_MANAGE"), middleware.RequireSuperAdmin(), organizationHandler.Reject)
+			admin.GET("/organizations/:id/history", middleware.RequirePermission(db.Pool, "ORGANIZATION_MANAGE"), middleware.RequireSuperAdmin(), organizationHandler.History)
 			{
 				admin.GET(
 					"/dashboard",
@@ -1050,24 +1053,19 @@ func SetupRouterWithRuntime(
 						db.Pool,
 						"PERMISSION_CREATE",
 					),
+					middleware.RequireSuperAdmin(),
 					permissionHandler.CreatePermission,
 				)
 
 				admin.GET(
 					"/permissions",
-					middleware.RequirePermission(
-						db.Pool,
-						"PERMISSION_VIEW",
-					),
+					middleware.RequireAnyPermission(db.Pool, "PERMISSION_VIEW", "ROLE_MANAGE_PERMISSIONS"),
 					permissionHandler.ListPermissions,
 				)
 
 				admin.GET(
 					"/permissions/:id",
-					middleware.RequirePermission(
-						db.Pool,
-						"PERMISSION_VIEW",
-					),
+					middleware.RequireAnyPermission(db.Pool, "PERMISSION_VIEW", "ROLE_MANAGE_PERMISSIONS"),
 					permissionHandler.GetPermissionByID,
 				)
 
@@ -1077,6 +1075,7 @@ func SetupRouterWithRuntime(
 						db.Pool,
 						"PERMISSION_UPDATE",
 					),
+					middleware.RequireSuperAdmin(),
 					permissionHandler.UpdatePermission,
 				)
 
@@ -1086,6 +1085,7 @@ func SetupRouterWithRuntime(
 						db.Pool,
 						"PERMISSION_DISABLE",
 					),
+					middleware.RequireSuperAdmin(),
 					permissionHandler.DeletePermission,
 				)
 
@@ -1127,6 +1127,11 @@ func SetupRouterWithRuntime(
 				)
 
 				// User role management routes
+				admin.POST(
+					"/user-role-assignments/bulk",
+					middleware.RequirePermission(db.Pool, "ROLE_ASSIGN"),
+					userRoleHandler.BulkAssignRoles,
+				)
 				admin.POST(
 					"/users/:id/roles",
 					middleware.RequirePermission(
@@ -1357,6 +1362,13 @@ func initializeHoneytokenModule(
 	); err != nil {
 		return nil, nil, nil, nil, nil, nil, fmt.Errorf(
 			"failed to connect File Event Service to Threat Engine: %w",
+			err,
+		)
+	}
+
+	if err = honeytokenService.SetFileEventService(fileEventService); err != nil {
+		return nil, nil, nil, nil, nil, nil, fmt.Errorf(
+			"failed to connect Honeytoken triggers to incident automation: %w",
 			err,
 		)
 	}

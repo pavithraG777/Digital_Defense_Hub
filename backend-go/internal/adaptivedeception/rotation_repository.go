@@ -321,6 +321,44 @@ func (r *Repository) GetRotation(
 	return rotation, nil
 }
 
+func (r *Repository) ListRotations(
+	ctx context.Context,
+	organizationID uuid.UUID,
+) ([]CanaryRotation, error) {
+	if r == nil || r.db == nil {
+		return nil, ErrAdaptiveDeceptionRepositoryUnavailable
+	}
+	if organizationID == uuid.Nil {
+		return nil, errors.New("organization ID is required")
+	}
+
+	const query = `
+		SELECT ` + canaryRotationSelectColumns + `
+		FROM canary_rotations
+		WHERE organization_id = $1
+		ORDER BY requested_at DESC, rotation_sequence DESC
+		LIMIT 200;
+	`
+	rows, err := r.db.Query(ctx, query, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("list canary rotations: %w", err)
+	}
+	defer rows.Close()
+
+	rotations := make([]CanaryRotation, 0)
+	for rows.Next() {
+		rotation, scanErr := scanCanaryRotation(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("scan canary rotation: %w", scanErr)
+		}
+		rotations = append(rotations, *rotation)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate canary rotations: %w", err)
+	}
+	return rotations, nil
+}
+
 func (r *Repository) GetActiveRotation(
 	ctx context.Context,
 	organizationID uuid.UUID,

@@ -65,12 +65,10 @@ func (r *Repository) CreateUser(
 		SELECT EXISTS (
 			SELECT 1
 			FROM users
-			WHERE organization_id = $1
-			  AND LOWER(username) = LOWER($2)
+			WHERE LOWER(username) = LOWER($1)
 			  AND deleted_at IS NULL
 		)
 		`,
-		organizationID,
 		request.Username,
 	).Scan(&usernameExists)
 
@@ -94,12 +92,10 @@ func (r *Repository) CreateUser(
 		SELECT EXISTS (
 			SELECT 1
 			FROM users
-			WHERE organization_id = $1
-			  AND LOWER(official_email) = LOWER($2)
+			WHERE LOWER(official_email) = LOWER($1)
 			  AND deleted_at IS NULL
 		)
 		`,
-		organizationID,
 		request.OfficialEmail,
 	).Scan(&emailExists)
 
@@ -128,6 +124,7 @@ func (r *Repository) CreateUser(
 			password_hash,
 			user_type,
 			account_status,
+			email_verified,
 			must_change_password
 		)
 		VALUES (
@@ -138,6 +135,7 @@ func (r *Repository) CreateUser(
 			$5,
 			$6,
 			'ACTIVE',
+			TRUE,
 			TRUE
 		)
 		`,
@@ -310,6 +308,7 @@ func (r *Repository) validateRole(
 func (r *Repository) ListUsers(
 	ctx context.Context,
 	organizationID uuid.UUID,
+	includePlatformCreated bool,
 	req ListUsersRequest,
 ) (*ListUsersResponse, error) {
 	if req.Page <= 0 {
@@ -370,8 +369,21 @@ func (r *Repository) ListUsers(
 		LEFT JOIN roles r
 			ON r.id = ur.role_id
 			AND r.deleted_at IS NULL
-		WHERE u.organization_id = $1
+		WHERE ($2::boolean OR u.organization_id = $1)
 		  AND u.deleted_at IS NULL
+		  AND ($2::boolean OR NOT EXISTS (
+			SELECT 1
+			FROM user_roles created_assignment
+			JOIN user_roles grantor_assignment
+			  ON grantor_assignment.user_id = created_assignment.granted_by
+			  AND grantor_assignment.is_active = TRUE
+			  AND UPPER(grantor_assignment.status) = 'ACTIVE'
+			JOIN roles grantor_role
+			  ON grantor_role.id = grantor_assignment.role_id
+			  AND grantor_role.deleted_at IS NULL
+			WHERE created_assignment.user_id = u.id
+			  AND UPPER(grantor_role.role_code) = 'SUPER_ADMIN'
+		  ))
 	`
 
 	countQuery := `
@@ -379,19 +391,34 @@ func (r *Repository) ListUsers(
 		FROM users u
 		JOIN user_profiles up
 			ON up.user_id = u.id
-		WHERE u.organization_id = $1
+		WHERE ($2::boolean OR u.organization_id = $1)
 		  AND u.deleted_at IS NULL
+		  AND ($2::boolean OR NOT EXISTS (
+			SELECT 1
+			FROM user_roles created_assignment
+			JOIN user_roles grantor_assignment
+			  ON grantor_assignment.user_id = created_assignment.granted_by
+			  AND grantor_assignment.is_active = TRUE
+			  AND UPPER(grantor_assignment.status) = 'ACTIVE'
+			JOIN roles grantor_role
+			  ON grantor_role.id = grantor_assignment.role_id
+			  AND grantor_role.deleted_at IS NULL
+			WHERE created_assignment.user_id = u.id
+			  AND UPPER(grantor_role.role_code) = 'SUPER_ADMIN'
+		  ))
 	`
 
 	args := []interface{}{
 		organizationID,
+		includePlatformCreated,
 	}
 
 	countArgs := []interface{}{
 		organizationID,
+		includePlatformCreated,
 	}
 
-	argPosition := 2
+	argPosition := 3
 
 	if req.Search != "" {
 		searchCondition := fmt.Sprintf(
@@ -693,13 +720,11 @@ func (r *Repository) UpdateUser(
 			SELECT EXISTS (
 				SELECT 1
 				FROM users
-				WHERE organization_id = $1
-				  AND LOWER(official_email) = LOWER($2)
-				  AND id <> $3
+				WHERE LOWER(official_email) = LOWER($1)
+				  AND id <> $2
 				  AND deleted_at IS NULL
 			)
 			`,
-			organizationID,
 			*req.OfficialEmail,
 			userID,
 		).Scan(&emailExists)

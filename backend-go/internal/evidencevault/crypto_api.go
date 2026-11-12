@@ -44,6 +44,11 @@ func (h *Handler) PreserveObject(c *gin.Context) {
 		response.BadRequest(c, "retention_days must be between 1 and 3650", nil)
 		return
 	}
+	ownerPassword := c.PostForm("owner_password")
+	if len(ownerPassword) < 8 || len(ownerPassword) > 128 {
+		response.BadRequest(c, "Owner access password must contain 8 to 128 characters", nil)
+		return
+	}
 	file, err := c.FormFile("file")
 	if err != nil {
 		response.BadRequest(c, "Evidence file is required", nil)
@@ -75,6 +80,10 @@ func (h *Handler) PreserveObject(c *gin.Context) {
 		response.InternalServerError(c, "Could not create evidence preservation record", err.Error())
 		return
 	}
+	if err = h.createAccessPolicy(c, org, job.ID, actor, ownerPassword); err != nil {
+		response.InternalServerError(c, "Could not create evidence access policy", nil)
+		return
+	}
 	_, _ = h.repo.Transition(c, org, job.ID, actor, "PRESERVED", "Original evidence encrypted, stored, and signed", &actor)
 	response.Created(c, "Evidence encrypted and preserved", gin.H{"job": job, "manifest": m, "retain_until": object.RetainUntil, "size_bytes": object.SizeBytes})
 }
@@ -93,6 +102,10 @@ func (h *Handler) GetObjectContent(c *gin.Context) {
 	m, err := scanManifest(h.repo.db.QueryRow(c, manifestSelect+` WHERE organization_id=$1 AND evidence_id=$2`, org, evidenceID))
 	if err != nil {
 		response.NotFound(c, "Evidence manifest not found", nil)
+		return
+	}
+	var jobID uuid.UUID
+	if err = h.repo.db.QueryRow(c, `SELECT id FROM evidence_preservation_jobs WHERE organization_id=$1 AND manifest_evidence_id=$2`, org, evidenceID).Scan(&jobID); err != nil || !h.requireAccess(c, org, jobID) {
 		return
 	}
 	uriOrg, objectID, versionID, err := parseLocalVaultURI(m.ObjectURI)

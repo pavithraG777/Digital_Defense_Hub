@@ -226,6 +226,78 @@ func (r *Repository) GetAnalysisModelReference(
 	return model, nil
 }
 
+// ResolveImageEnsembleModels returns active organization-scoped default image
+// detectors that are compatible with the requested analysis scope. Uploaded
+// specialist models and sufficiently trained DDH checkpoints may participate;
+// tiny smoke-test checkpoints are deliberately excluded.
+func (r *Repository) ResolveImageEnsembleModels(ctx context.Context, organizationID uuid.UUID, jobType string) ([]AnalysisModelReference, error) {
+	if err := r.validateAvailable(); err != nil {
+		return nil, err
+	}
+	jobType = NormalizeConstant(jobType)
+	if ctx == nil || organizationID == uuid.Nil ||
+		(jobType != JobTypeDeepfakeImage && jobType != JobTypeSyntheticImage) {
+		return nil, ErrInvalidRepositoryInput
+	}
+	rows, err := r.databasePool.Query(ctx, `
+		SELECT m.id,v.id,m.model_code,m.model_name,m.model_type,m.status,
+			m.framework,m.input_type,m.output_type,m.supports_cpu,m.supports_gpu,
+			m.maximum_file_size_bytes,v.version_number,v.model_file_path,
+			v.model_file_hash,v.model_format,v.status,v.is_default,
+			v.confidence_threshold,COALESCE(v.configuration, '{}'::jsonb)
+		FROM ai_models AS m
+		JOIN ai_model_versions AS v ON v.ai_model_id = m.id
+		WHERE m.organization_id = $1
+			AND m.deleted_at IS NULL
+			AND m.status = 'ACTIVE' AND v.status = 'ACTIVE' AND v.is_default = TRUE
+			AND m.input_type = 'IMAGE'
+			AND (
+				(
+					$2 = 'DEEPFAKE_IMAGE_DETECTION'
+					AND (
+						COALESCE(v.configuration->>'ensemble_role','') IN ('WHOLE_IMAGE_AI','FACE_SWAP')
+						OR (
+							COALESCE(v.configuration->>'detector_scope','DEEPFAKE_IMAGE_DETECTION') = 'DEEPFAKE_IMAGE_DETECTION'
+							AND COALESCE(v.configuration->>'artifact_verified_by','') = 'training-worker'
+							AND EXISTS (
+								SELECT 1 FROM ml_training_jobs AS j
+								WHERE j.id::text = v.configuration->>'training_job_id'
+									AND j.status = 'COMPLETED'
+									AND j.train_record_count >= 100
+							)
+						)
+					)
+				)
+				OR (
+					$2 = 'AI_GENERATED_IMAGE_DETECTION'
+					AND COALESCE(v.configuration->>'detector_scope','') = 'AI_GENERATED_IMAGE_DETECTION'
+					AND COALESCE(v.configuration->>'artifact_verified_by','') = 'training-worker'
+				)
+			)
+		ORDER BY CASE v.configuration->>'ensemble_role'
+			WHEN 'WHOLE_IMAGE_AI' THEN 0 WHEN 'GENERAL_DEEPFAKE' THEN 1
+			WHEN 'SYNTHETIC_IMAGE' THEN 1 WHEN 'FACE_SWAP' THEN 2 ELSE 3 END,
+			v.created_at DESC
+		LIMIT 4
+	`, organizationID, jobType)
+	if err != nil {
+		return nil, fmt.Errorf("resolve image ensemble models: %w", err)
+	}
+	defer rows.Close()
+	models := []AnalysisModelReference{}
+	for rows.Next() {
+		model, scanErr := scanAnalysisModelReference(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("scan image ensemble model: %w", scanErr)
+		}
+		models = append(models, *model)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate image ensemble models: %w", err)
+	}
+	return models, nil
+}
+
 // IsInferenceReady reports whether a verified trained-model
 // file may be supplied to the Python inference service.
 // CUSTOM and TESTING registrations deliberately use the

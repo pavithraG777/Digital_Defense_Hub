@@ -161,6 +161,10 @@ class MediaAnalysisRequest(StrictSchema):
     execution_device: ExecutionDevice = "CPU"
 
     model: ModelExecutionSpecification | None = None
+    models: list[ModelExecutionSpecification] = Field(
+        default_factory=list,
+        max_length=3,
+    )
 
     parameters: dict[str, Any] = Field(
         default_factory=dict,

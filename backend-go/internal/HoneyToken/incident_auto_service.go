@@ -342,6 +342,14 @@ func isThreatEligibleForIncident(
 		highRiskType = true
 	}
 
+	// Any deception interaction is an incident by definition. A honeytoken or
+	// canary is intentionally placed to detect unauthorized activity, so it
+	// must not be suppressed merely because the first event has a medium score.
+	switch threat.ThreatType {
+	case ThreatTypeHoneytokenAccess, ThreatTypeCanaryTriggered:
+		return true, "deception trigger requires incident response"
+	}
+
 	if threat.Severity == ThreatLevelCritical {
 		return true,
 			"critical threat requires incident response"

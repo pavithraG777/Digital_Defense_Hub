@@ -73,10 +73,19 @@ func (r *Repository) LoadAnalysisSource(
 		)
 	}
 
+	models := []AnalysisModelReference{}
+	if NormalizeConstant(asset.MediaType) == MediaTypeImage {
+		models, err = r.ResolveImageEnsembleModels(ctx, job.OrganizationID, job.JobType)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return &AnalysisSource{
-		Asset: *asset,
-		Model: *model,
-		Job:   *job,
+		Asset:  *asset,
+		Model:  *model,
+		Models: models,
+		Job:    *job,
 	}, nil
 }
 
@@ -88,6 +97,10 @@ func analysisModelMatchesJob(
 	jobType string,
 ) bool {
 	normalizedJobType := NormalizeConstant(jobType)
+	if role := NormalizeConstant(fmt.Sprint(model.Configuration["ensemble_role"])); (role == "WHOLE_IMAGE_AI" || role == "FACE_SWAP") &&
+		(normalizedJobType == JobTypeDeepfakeImage || normalizedJobType == JobTypeSyntheticImage) {
+		return true
+	}
 	if rawScope, exists := model.Configuration["detector_scope"]; exists && rawScope != nil {
 		if configuredScope := NormalizeConstant(
 			fmt.Sprint(rawScope),

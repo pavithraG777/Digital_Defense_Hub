@@ -79,6 +79,31 @@ func BuildMediaEngineRequest(
 		)
 	}
 
+	if request.MediaType == MediaTypeImage {
+		candidates := source.Models
+		if len(candidates) < 2 {
+			candidates = []AnalysisModelReference{source.Model}
+		}
+		readyModels := make([]AnalysisModelReference, 0, len(candidates))
+		seenVersions := map[uuid.UUID]bool{}
+		for _, model := range candidates {
+			if seenVersions[model.ModelVersionID] || !model.IsInferenceReady() || !analysisModelMatchesJob(model, source.Job.JobType) {
+				continue
+			}
+			if err := validateExecutionDeviceSupport(model, executionDevice); err != nil {
+				continue
+			}
+			seenVersions[model.ModelVersionID] = true
+			readyModels = append(readyModels, model)
+		}
+		if len(readyModels) >= 2 {
+			request.Models = make([]MediaEngineModelSpecification, 0, len(readyModels))
+			for _, model := range readyModels {
+				request.Models = append(request.Models, *buildEngineModelSpecification(model))
+			}
+		}
+	}
+
 	if err := normalizeAndValidateEngineRequest(
 		&request,
 	); err != nil {
@@ -245,6 +270,35 @@ func buildEngineModelSpecification(
 			*model.ConfidenceThreshold
 	}
 
+	configuration := cloneRequestParameters(model.Configuration)
+	role := NormalizeConstant(fmt.Sprint(configuration["ensemble_role"]))
+	if role == "" {
+		switch NormalizeConstant(fmt.Sprint(configuration["detector_scope"])) {
+		case JobTypeSyntheticImage:
+			role = "SYNTHETIC_IMAGE"
+		case JobTypeDeepfakeImage:
+			role = "GENERAL_DEEPFAKE"
+		}
+		if role != "" {
+			configuration["ensemble_role"] = role
+		}
+	}
+	preprocessing := ""
+	if configured, exists := configuration["preprocessing"]; exists && configured != nil {
+		preprocessing = NormalizeConstant(fmt.Sprint(configured))
+	}
+	if preprocessing == "" {
+		switch role {
+		case "FACE_SWAP":
+			configuration["preprocessing"] = "FACE_CONTEXT_CROP_V1"
+			if _, exists := configuration["context_scale"]; !exists {
+				configuration["context_scale"] = 2.35
+			}
+		case "WHOLE_IMAGE_AI":
+			configuration["preprocessing"] = "WHOLE_IMAGE_RGB_V1"
+		}
+	}
+
 	return &MediaEngineModelSpecification{
 		ModelName: strings.TrimSpace(
 			model.ModelName,
@@ -267,9 +321,7 @@ func buildEngineModelSpecification(
 
 		ConfidenceThreshold: confidenceThreshold,
 
-		Configuration: cloneRequestParameters(
-			model.Configuration,
-		),
+		Configuration: configuration,
 	}
 }
 

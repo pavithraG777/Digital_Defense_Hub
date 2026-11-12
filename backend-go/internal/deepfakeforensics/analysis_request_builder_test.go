@@ -160,3 +160,42 @@ func TestBuildMediaEngineRequestForDocumentOCR(t *testing.T) {
 		t.Fatalf("expected request media type %s, got %s", MediaTypeDocument, engineRequest.MediaType)
 	}
 }
+
+func TestBuildMediaEngineRequestIncludesSpecializedImageEnsemble(t *testing.T) {
+	organizationID, assetID, jobID := uuid.New(), uuid.New(), uuid.New()
+	threshold := 66.0
+	whole := AnalysisModelReference{
+		ModelID: uuid.New(), ModelVersionID: uuid.New(), ModelName: "Whole image AI detector",
+		ModelType: JobTypeDeepfakeImage, ModelStatus: analysisModelStatusActive,
+		InputType: MediaTypeImage, SupportsCPU: true, VersionNumber: "2.0.0",
+		ModelFilePath: "models/whole.pth", ModelFileHash: strings.Repeat("a", 64),
+		ModelFormat: "PTH", VersionStatus: analysisModelVersionStatusActive, IsDefault: true,
+		ConfidenceThreshold: &threshold, Configuration: map[string]any{"ensemble_role": "WHOLE_IMAGE_AI"},
+	}
+	face := whole
+	face.ModelID, face.ModelVersionID = uuid.New(), uuid.New()
+	face.ModelName, face.ModelFilePath, face.ModelFileHash = "Face swap detector", "models/face.pth", strings.Repeat("b", 64)
+	face.Configuration = map[string]any{"ensemble_role": "FACE_SWAP", "preprocessing": ""}
+	job := AIAnalysisJob{
+		ID: jobID, OrganizationID: organizationID, MediaAssetID: &assetID,
+		AIModelID: whole.ModelID, AIModelVersionID: whole.ModelVersionID,
+		JobType: JobTypeDeepfakeImage, Status: JobStatusProcessing,
+	}
+	source := AnalysisSource{
+		Asset: MediaAnalysisAsset{ID: assetID, OrganizationID: organizationID, OriginalFileName: "photo.jpg", StoragePath: "data/photo.jpg", MediaType: MediaTypeImage, MimeType: "image/jpeg", FileSizeBytes: 1024, FileHash: strings.Repeat("c", 64), Status: mediaAssetStatusAvailable},
+		Model: whole, Models: []AnalysisModelReference{whole, face}, Job: job,
+	}
+	request, err := BuildMediaEngineRequest(source)
+	if err != nil {
+		t.Fatalf("expected ensemble request, got %v", err)
+	}
+	if len(request.Models) != 2 {
+		t.Fatalf("expected two deduplicated ensemble models, got %d", len(request.Models))
+	}
+	if request.Models[1].Configuration["ensemble_role"] != "FACE_SWAP" {
+		t.Fatalf("expected face-swap model configuration, got %#v", request.Models[1].Configuration)
+	}
+	if request.Models[1].Configuration["preprocessing"] != "FACE_CONTEXT_CROP_V1" {
+		t.Fatalf("expected inferred face preprocessing, got %#v", request.Models[1].Configuration)
+	}
+}

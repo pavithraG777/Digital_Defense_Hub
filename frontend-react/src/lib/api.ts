@@ -3,10 +3,7 @@ import type { ApiEnvelope, AuthTokens, LoginResult } from "../types";
 const ACCESS_TOKEN_KEY = "ddh.access-token";
 const REFRESH_TOKEN_KEY = "ddh.refresh-token";
 const USER_KEY = "ddh.user";
-const API_BASE = (
-  import.meta.env.VITE_API_BASE_URL
-  || (import.meta.env.PROD ? "https://digital-defense-hub-1.onrender.com/api/v1" : "/api/v1")
-).replace(/\/$/, "");
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || "/api/v1").replace(/\/$/, "");
 
 export class ApiError extends Error {
   status: number;
@@ -62,6 +59,15 @@ export const session = {
 };
 
 let refreshInFlight: Promise<boolean> | null = null;
+let sessionRedirectStarted = false;
+
+function redirectExpiredSession() {
+  if (sessionRedirectStarted || typeof window === "undefined") return;
+  sessionRedirectStarted = true;
+  session.clear();
+  const returnTo = `${window.location.pathname}${window.location.search}`;
+  window.location.replace(`/login?reason=session_expired&return_to=${encodeURIComponent(returnTo)}`);
+}
 
 async function parseResponse<T>(response: Response): Promise<T> {
   const contentType = response.headers.get("content-type") || "";
@@ -121,19 +127,11 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     requestBody = JSON.stringify(body);
   }
 
-  let response: Response;
-  try {
-    response = await fetch(`${API_BASE}${path}`, {
-      ...rest,
-      headers: requestHeaders,
-      body: requestBody,
-    });
-  } catch (error) {
-    const message = error instanceof TypeError
-      ? "Unable to reach the Digital Defense Hub API. Check the API URL and CORS configuration, then try again."
-      : "Unable to reach the Digital Defense Hub API.";
-    throw new ApiError(message, 0, error);
-  }
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...rest,
+    headers: requestHeaders,
+    body: requestBody,
+  });
 
   const isPublicAuthRequest = /^\/auth\/(login|mfa\/verify|refresh|forgot-password|reset-password|revoke-refresh-token)$/.test(path);
   if (response.status === 401 && !skipRefresh && !isPublicAuthRequest && tokens?.refreshToken) {
@@ -142,6 +140,8 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     });
     if (await refreshInFlight) return apiRequest<T>(path, { ...options, skipRefresh: true });
   }
+
+  if (response.status === 401 && !isPublicAuthRequest) redirectExpiredSession();
 
   return parseResponse<T>(response);
 }
@@ -158,6 +158,7 @@ export async function apiBlob(path: string, options: { method?: "GET" | "POST"; 
     refreshInFlight ||= refreshAccessToken().finally(() => { refreshInFlight = null; });
     if (await refreshInFlight) return apiBlob(path, { ...options, skipRefresh: true });
   }
+  if (response.status === 401) redirectExpiredSession();
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as ApiEnvelope<unknown> | null;
     throw new ApiError(payload?.message || `Request failed (${response.status})`, response.status, payload?.error);

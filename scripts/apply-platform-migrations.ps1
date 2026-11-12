@@ -1,5 +1,6 @@
 param(
     [string]$MigrationDirectory = "$PSScriptRoot\migrations\seed",
+    [string]$EnvironmentFile,
     [switch]$ValidateOnly,
     [switch]$AdoptLegacySchema
 )
@@ -23,6 +24,18 @@ foreach ($prefix in $required) {
 }
 Write-Host "Validated $($files.Count) ordered platform migrations, including 024-030."
 if ($ValidateOnly) { exit 0 }
+
+if ($EnvironmentFile) {
+    $resolvedEnvironmentFile = (Resolve-Path -LiteralPath $EnvironmentFile).Path
+    foreach ($line in Get-Content -LiteralPath $resolvedEnvironmentFile) {
+        $trimmed = $line.Trim()
+        if (-not $trimmed -or $trimmed.StartsWith('#') -or -not $trimmed.Contains('=')) { continue }
+        $name, $value = $trimmed.Split('=', 2)
+        if ($name.Trim()) {
+            [Environment]::SetEnvironmentVariable($name.Trim(), $value.Trim(), 'Process')
+        }
+    }
+}
 
 $requiredEnv = 'DB_HOST','DB_PORT','DB_USER','DB_NAME'
 foreach ($name in $requiredEnv) {

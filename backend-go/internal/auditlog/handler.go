@@ -32,7 +32,13 @@ func (h *Handler) ListAuditLogs(
 		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "Organization information is missing"})
 		return
 	}
-	auditLogs, err := h.service.ListAuditLogsForOrganization(c.Request.Context(), organizationID)
+	var auditLogs []AuditLog
+	var err error
+	if auditContextIsSuperAdmin(c) {
+		auditLogs, err = h.service.ListAuditLogs(c.Request.Context())
+	} else {
+		auditLogs, err = h.service.ListAuditLogsForOrganization(c.Request.Context(), organizationID)
+	}
 	if err != nil {
 		c.JSON(
 			http.StatusInternalServerError,
@@ -91,6 +97,23 @@ func (h *Handler) ListAuditLogs(
 	)
 }
 
+func auditContextIsSuperAdmin(c *gin.Context) bool {
+	value, ok := c.Get("roles")
+	if !ok {
+		return false
+	}
+	roles, ok := value.([]string)
+	if !ok {
+		return false
+	}
+	for _, role := range roles {
+		if strings.EqualFold(strings.TrimSpace(role), "SUPER_ADMIN") {
+			return true
+		}
+	}
+	return false
+}
+
 // ListTimeline serves the organization-scoped, database-paginated central
 // activity stream.  It unifies administrative, endpoint/deception, threat,
 // incident and forensic-review events on the server.
@@ -126,7 +149,7 @@ func (h *Handler) ListTimeline(c *gin.Context) {
 			*pair.target = &value
 		}
 	}
-	result, err := h.service.ListTimeline(c.Request.Context(), organizationID, filter)
+	result, err := h.service.ListTimeline(c.Request.Context(), organizationID, auditContextIsSuperAdmin(c), filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to list audit activity", "error": err.Error()})
 		return
@@ -185,7 +208,7 @@ func (h *Handler) GetAuditLogByID(
 		)
 		return
 	}
-	if auditLog.OrganizationID == nil || *auditLog.OrganizationID != organizationID {
+	if !auditContextIsSuperAdmin(c) && (auditLog.OrganizationID == nil || *auditLog.OrganizationID != organizationID) {
 		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "Audit log not found"})
 		return
 	}

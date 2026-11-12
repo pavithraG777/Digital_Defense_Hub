@@ -1,0 +1,26 @@
+# import config
+packagefile bufio=E:\Cyber-Security-Platform\.go-cache\59\5942f0d0d75fb7973b3cf18ca28b43c7ebbaefa665482da10492707719943ac0-d
+packagefile bytes=E:\Cyber-Security-Platform\.go-cache\a8\a8609794962a13413ae58c8721b09b0334d1d88d8b83060450403a36fd72a314-d
+packagefile context=E:\Cyber-Security-Platform\.go-cache\76\76977c433d435d1632c8f09f48e594cd348a36f238f3e2a29e52c314f1b2844c-d
+packagefile crypto/sha256=E:\Cyber-Security-Platform\.go-cache\1e\1e4958c6978d99f497f072dd5394178f857b8ee84b0788baae18637346730ef0-d
+packagefile encoding/hex=E:\Cyber-Security-Platform\.go-cache\71\716ecb2ccd0ee038743738ee922c90500c57a25c2d1c9d00c0429cd65d377c27-d
+packagefile encoding/json=E:\Cyber-Security-Platform\.go-cache\d0\d0dd695a6741aba388d1509add7ef1ef790258aaf37664dbeccb67e0413042b8-d
+packagefile errors=E:\Cyber-Security-Platform\.go-cache\8d\8d3f93f461ca7ce7dd401f27f2f88203f45992b4ffdb62deb62bf444229a585c-d
+packagefile fmt=E:\Cyber-Security-Platform\.go-cache\77\77b9f449cb6c02b5db363e850ae0c0af70a11a8cbce03a49be8b9fcd60562aed-d
+packagefile github.com/gin-gonic/gin=E:\Cyber-Security-Platform\.go-cache\34\343037e784c09006feae0a6e48e255f6d0767498058647e43b64f8cf72e2ac58-d
+packagefile github.com/google/uuid=E:\Cyber-Security-Platform\.go-cache\00\006eda183de63b82bf91c7bc25e11c93eaf9a8fc89c9b9e31b7494f8208e3598-d
+packagefile github.com/jackc/pgx/v5=E:\Cyber-Security-Platform\.go-cache\fb\fbefb865fea2cf92d915c81f9622ec634a1c8a13e0e877e6fbef9ee74bcc51ba-d
+packagefile github.com/jackc/pgx/v5/pgxpool=E:\Cyber-Security-Platform\.go-cache\11\114ddf7b98bc57464789fefce1f1815077a12efbfa2f789752709f82ce782397-d
+packagefile github.com/pavithraG777/cyber-security-platform/backend/internal/deepfakeforensics=E:\Cyber-Security-Platform\.go-cache\5c\5c1d0cba1acde9c97b909d18cf3bfbb05062b4a17731ecd038801feba61747f5-d
+packagefile go.uber.org/zap=E:\Cyber-Security-Platform\.go-cache\39\3960ca1fe6ef8fc86f108df52523806d015183432a9ed80a362610ee7d83bfee-d
+packagefile io=E:\Cyber-Security-Platform\.go-cache\ee\ee63b377baa2f73d9f358d5a7d01e8bda12ca4e013d54bf9fb0300682db1eaca-d
+packagefile net/http=E:\Cyber-Security-Platform\.go-cache\9b\9b6583ff1834c3f5f0bb0f91f409e90c01c5ba7b6a8e4897ca456ed1fea35381-d
+packagefile net/mail=E:\Cyber-Security-Platform\.go-cache\bd\bd8f5abcc3cd4eeda47b46aa7afea342ad81994ed6d08fb83397334874118166-d
+packagefile net/url=E:\Cyber-Security-Platform\.go-cache\11\11e3d69ea653ebe11502f740e390e6ffba2f5f2043f0bbec2ec40a97f99de307-d
+packagefile os=E:\Cyber-Security-Platform\.go-cache\a7\a7e3b665e44f95bd58ca75ece283818b051b219f971a719e983043395129de18-d
+packagefile os/exec=E:\Cyber-Security-Platform\.go-cache\7f\7f6e4774daa785c6a5a18fa11f088ff6b82317b62b4818d71ed0c4e359725a05-d
+packagefile path/filepath=E:\Cyber-Security-Platform\.go-cache\54\546a8ccb2ec2e54d6340d0df78c92d11211783e31be1ced125a3150353a381c7-d
+packagefile regexp=E:\Cyber-Security-Platform\.go-cache\36\366dd3b13f8c76cb57f7e374306f91e0e6106924a09cabf31d34a8e9451c188e-d
+packagefile strings=E:\Cyber-Security-Platform\.go-cache\70\706629487b06f9bc04835ce5493b88c6da5e81fbd84ed6df0a83ee630d4cd901-d
+packagefile sync=E:\Cyber-Security-Platform\.go-cache\6c\6c150a98a0c6426c51045752ad2a73269ca54de1e7aa5329a3f86de234bf14e5-d
+packagefile time=E:\Cyber-Security-Platform\.go-cache\1d\1db5c6c7c7250afa2625739855ee03f9b52bee00335d87be637ab0e50511ffbf-d

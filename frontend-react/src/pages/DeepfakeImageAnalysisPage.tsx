@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent, DragEvent } from "react";
-import { AlertTriangle, CheckCircle2, ClipboardPaste, Eye, FileImage, LoaderCircle, ShieldCheck, Upload, X } from "lucide-react";
+import { AlertTriangle, Camera, CheckCircle2, ClipboardPaste, Eye, FileImage, LoaderCircle, ShieldCheck, Upload, X } from "lucide-react";
 import { api, apiBlob, apiRequest } from "../lib/api";
 import { useSearchParams } from "react-router-dom";
+import "./deepfakeOcr.css";
 
 type Asset = { id:string; asset_code:string; original_file_name:string; media_type:string; mime_type:string; file_size_bytes:number; file_hash:string; hash_algorithm:string; is_encrypted:boolean; encryption_algorithm?:string; status:string; uploaded_by?:string; uploaded_at:string; analyzed_at?:string; metadata?:Record<string,unknown> };
 type Job = { id:string; media_asset_id?:string; ai_model_id:string; ai_model_version_id:string; job_number:string; job_type:string; priority:string; status:string; progress_percentage:number; processing_duration_ms?:number; created_at:string; queued_at?:string; started_at?:string; completed_at?:string; error_message?:string };
 type DeepfakeResult = { detection_result:string; deepfake_probability?:number; authenticity_probability?:number; confidence_score?:number; faces_detected?:number; manipulated_faces_detected?:number; facial_artifact_detected:boolean; metadata_inconsistency_detected:boolean; detection_summary?:string; feature_data?:Record<string,unknown>; suspicious_regions?:Record<string,unknown>[]; created_at:string };
 type ForensicsResult = { forensic_result:string; confidence_score?:number; editing_trace_detected:boolean; compression_anomaly_detected:boolean; copy_move_detected:boolean; splicing_detected:boolean; noise_inconsistency_detected:boolean; timestamp_anomaly_detected:boolean; analysis_summary?:string; findings?:string[]; suspicious_locations?:Record<string,unknown>[]; forensic_feature_data?:Record<string,unknown>; created_at:string };
 type EvidenceAnalysis = { ai_model_name?:string; ai_model_version?:string; analysis_tool?:string; tool_version?:string; analysis_status:string; result?:string; confidence_score?:number; summary?:string; findings?:string; recommendation?:string; extracted_metadata?:Record<string,unknown>; result_data?:Record<string,unknown>; started_at?:string; completed_at?:string; reviewed_at?:string; review_notes?:string };
-type ResultBundle = { deepfake?:DeepfakeResult; forensics?:ForensicsResult; evidence_analysis?:EvidenceAnalysis };
+type OCRResult = { extraction_result:string; confidence_score?:number; detected_language?:string; ocr_engine?:string; extracted_text?:string; word_count?:number; character_count?:number; requires_manual_review?:boolean; page_results?:Record<string,unknown>[] };
+type ResultBundle = { deepfake?:DeepfakeResult; forensics?:ForensicsResult; ocr?:OCRResult; evidence_analysis?:EvidenceAnalysis };
 type TrustAssessment = { trust_score:number; risk_score:number; confidence_score:number; verdict:string; classification:string; risk_level:string; trained_model_used:boolean; requires_human_review:boolean; finalized:boolean; component_scores?:Record<string,unknown>; signals?:Record<string,unknown>[]; warnings?:string[]; completed_job_count:number; terminal_job_count:number; escalation_status:string; incident_id?:string; evaluated_at:string };
 type SecurityEvent = { id:string; event_type:string; reason:string; metadata?:Record<string,unknown>; created_at:string };
 type Page<T> = { items:T[]; total:number; page:number; page_size:number; total_pages:number };
@@ -65,6 +67,7 @@ function explanation(result?:DeepfakeResult) {
 function FullBackendDetails({ row, trust, forensics, events, workflow, loading, preview, onClose, onWorkflowAction }:{ row:AnalysisRow; trust?:TrustAssessment; forensics?:ResultBundle; events:SecurityEvent[]; workflow?:ReviewWorkflow; loading:boolean; preview?:string; onClose:()=>void; onWorkflowAction:(kind:"review"|"annotation"|"link")=>void }) {
   const deep = row.result?.deepfake;
   const classical = forensics?.forensics;
+  const ocr = forensics?.ocr;
   const evidence = row.result?.evidence_analysis;
   const evidencePackage = row.asset?.metadata?.evidence_package as Record<string,unknown>|undefined;
   const hashes = evidencePackage?.hashes as Record<string,unknown>|undefined;
@@ -80,6 +83,7 @@ function FullBackendDetails({ row, trust, forensics, events, workflow, loading, 
     <section><h3>Decision probabilities</h3><div className="df-full-metrics"><article><span>Authentic</span><strong>{percent(deep?.authenticity_probability)}</strong></article><article><span>Deepfake</span><strong>{percent(deep?.deepfake_probability)}</strong></article><article><span>Faces</span><strong>{deep?.faces_detected ?? "—"}</strong></article><article><span>Manipulated faces</span><strong>{deep?.manipulated_faces_detected ?? "—"}</strong></article></div><p>{deep?.detection_summary || evidence?.summary || "No summary returned."}</p><p className="df-warning"><AlertTriangle/>{row.job.job_type==="AI_GENERATED_IMAGE_DETECTION"?"Model scope: this whole-image model detects AI-generated imagery; it is not a dedicated face-swap detector.":"Model scope: this face-context model detects FaceForensics-style facial manipulation; it is not a whole-image AI generator detector."}</p></section>
     <section><h3>Trust and risk assessment</h3>{trust?<><div className="df-full-metrics"><article><span>Trust score</span><strong>{trust.trust_score.toFixed(1)}</strong></article><article><span>Risk score</span><strong>{trust.risk_score.toFixed(1)}</strong></article><article><span>Risk level</span><strong>{trust.risk_level}</strong></article><article><span>Human review</span><strong>{trust.requires_human_review?"Required":"Not required"}</strong></article></div><dl><div><dt>Final verdict</dt><dd>{trust.verdict}</dd></div><div><dt>Classification</dt><dd>{trust.classification}</dd></div><div><dt>Trained model used</dt><dd>{trust.trained_model_used?"Yes":"No"}</dd></div><div><dt>Assessment status</dt><dd>{trust.finalized?"Finalized":"Provisional"}</dd></div></dl>{trust.warnings?.map((warning,index)=><p className="df-warning" key={index}><AlertTriangle/>{warning}</p>)}{trust.signals?.length?<div className="df-human-section"><h4>Assessment signals</h4><HumanData value={trust.signals} name="Signal"/></div>:null}{safeEntries(trust.component_scores).length>0&&<div className="df-human-section"><h4>Component scores</h4><HumanData value={trust.component_scores}/></div>}</>:<p>Trust assessment is not available for this media asset yet.</p>}</section>
     <section><h3>Classical image forensics</h3>{classical?<><div className="df-full-metrics"><article><span>Result</span><strong>{classical.forensic_result}</strong></article><article><span>Confidence</span><strong>{percent(classical.confidence_score)}</strong></article><article><span>Suspicious locations</span><strong>{classical.suspicious_locations?.length || 0}</strong></article></div><div className="df-indicators">{[["Editing trace",classical.editing_trace_detected],["Compression anomaly",classical.compression_anomaly_detected],["Copy-move",classical.copy_move_detected],["Splicing",classical.splicing_detected],["Noise inconsistency",classical.noise_inconsistency_detected],["Timestamp anomaly",classical.timestamp_anomaly_detected]].map(([label,flag])=><span className={flag?"found":"clear"} key={String(label)}>{flag?"Detected":"Not detected"}<b>{label}</b></span>)}</div>{classical.analysis_summary&&<p>{classical.analysis_summary}</p>}{classical.findings?.map((finding,index)=><p className="df-drawer-reason" key={index}><CheckCircle2/>{finding}</p>)}</>:<p>Classical IMAGE_FORENSICS result is not present. Run COMBINED analysis to populate it.</p>}</section>
+    <section><h3>OCR text extraction</h3>{ocr?<><div className="df-full-metrics"><article><span>Result</span><strong>{shown(ocr.extraction_result)}</strong></article><article><span>Confidence</span><strong>{percent(ocr.confidence_score)}</strong></article><article><span>Language</span><strong>{ocr.detected_language||"Not detected"}</strong></article><article><span>Words</span><strong>{ocr.word_count??"—"}</strong></article></div><dl><div><dt>OCR engine</dt><dd>{ocr.ocr_engine||"Not reported"}</dd></div><div><dt>Manual review</dt><dd>{ocr.requires_manual_review?"Required":"Not required"}</dd></div></dl><div className="df-human-section"><h4>Extracted text</h4><pre className="df-ocr-text">{ocr.extracted_text?.trim()||"No readable text was found in this image."}</pre></div>{ocr.page_results?.length?<div className="df-human-section"><h4>OCR regions / pages</h4><HumanData value={ocr.page_results} name="OCR result"/></div>:null}</>:<p>OCR was not run for this older record. Analyze the image again to create an OCR extraction job.</p>}</section>
     <section><h3>Explainable AI features</h3>{safeEntries(deep?.feature_data).length?<HumanData value={deep?.feature_data}/>:<p>No feature values were returned by this model.</p>}<h4>Suspicious regions</h4>{deep?.suspicious_regions?.length?<HumanData value={deep.suspicious_regions} name="Region"/>:<p>No localized suspicious regions were returned.</p>}</section>
     <section><h3>Evidence analysis</h3><dl><div><dt>Model</dt><dd>{evidence?.ai_model_name || row.job.ai_model_id}</dd></div><div><dt>Version</dt><dd>{evidence?.ai_model_version || row.job.ai_model_version_id}</dd></div><div><dt>Tool</dt><dd>{evidence?.analysis_tool || "Not reported"}</dd></div><div><dt>Tool version</dt><dd>{evidence?.tool_version || "Not reported"}</dd></div><div><dt>Recommendation</dt><dd>{evidence?.recommendation || "Not reported"}</dd></div><div><dt>Review status</dt><dd>{evidence?.reviewed_at?`Reviewed ${when(evidence.reviewed_at)}`:"Not reviewed"}</dd></div></dl>{evidence?.findings&&<p>{evidence.findings}</p>}{safeEntries(evidence?.extracted_metadata).length>0&&<div className="df-human-section"><h4>Extracted metadata</h4><HumanData value={evidence?.extracted_metadata}/></div>}</section>
     <section><h3>Analyst review workflow</h3><p>Record a human decision, preserve annotations, and link this analysis to the active investigation.</p><div className="df-upload-actions"><button type="button" className="df-secondary" onClick={()=>onWorkflowAction("review")}>Record decision</button><button type="button" className="df-secondary" onClick={()=>onWorkflowAction("annotation")}>Add annotation</button><button type="button" className="df-secondary" onClick={()=>onWorkflowAction("link")}>Link case / incident</button></div><div className="df-human-section"><h4>Decisions</h4><HumanData value={workflow?.reviews || []} name="Review"/><h4>Annotations</h4><HumanData value={workflow?.annotations || []} name="Annotation"/><h4>Linked investigations</h4><HumanData value={workflow?.case_links || []} name="Link"/></div></section>
@@ -91,10 +95,14 @@ function FullBackendDetails({ row, trust, forensics, events, workflow, loading, 
 export function DeepfakeImageAnalysisPage() {
   const [searchParams] = useSearchParams();
   const inputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const cameraStreamRef = useRef<MediaStream|null>(null);
   const pollRef = useRef<number>();
   const pollingRef = useRef(false);
   const reportRequestsRef = useRef(new Set<string>());
   const [file,setFile] = useState<File|null>(null);
+  const [cameraOpen,setCameraOpen] = useState(false);
+  const [uploadSource,setUploadSource] = useState("FRONTEND_IMAGE_ANALYSIS");
   const [preview,setPreview] = useState<string>();
   const [busy,setBusy] = useState(false);
   const [analysisProgress,setAnalysisProgress] = useState<string>();
@@ -110,6 +118,10 @@ export function DeepfakeImageAnalysisPage() {
   const [securityEvents,setSecurityEvents] = useState<SecurityEvent[]>([]);
   const [workflow,setWorkflow] = useState<ReviewWorkflow>();
   useEffect(() => () => { if (pollRef.current) window.clearInterval(pollRef.current); },[]);
+  useEffect(() => () => { cameraStreamRef.current?.getTracks().forEach(track=>track.stop()); },[]);
+  useEffect(() => {
+    if (cameraOpen && videoRef.current && cameraStreamRef.current) videoRef.current.srcObject = cameraStreamRef.current;
+  },[cameraOpen]);
   useEffect(() => () => { if (detailPreview) URL.revokeObjectURL(detailPreview); },[detailPreview]);
   useEffect(() => {
     if (!detailOpen || !selected || !detailSelected) return;
@@ -173,14 +185,58 @@ export function DeepfakeImageAnalysisPage() {
     return ()=>window.removeEventListener("paste",pasteImage);
   },[busy,preview]);
 
-  function choose(next:File|null) {
+  function choose(next:File|null, source="FRONTEND_IMAGE_ANALYSIS") {
     if (!next) return;
     if (!next.type.startsWith("image/")) { setError("Choose a JPG, JPEG, PNG or WEBP image."); return; }
     if (preview) URL.revokeObjectURL(preview);
-    setFile(next); setPreview(URL.createObjectURL(next)); setError(undefined); setAnalysisProgress(undefined);
+    setFile(next); setPreview(URL.createObjectURL(next)); setUploadSource(source); setError(undefined); setAnalysisProgress(undefined);
+  }
+
+  function closeCamera() {
+    cameraStreamRef.current?.getTracks().forEach(track=>track.stop());
+    cameraStreamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+    setCameraOpen(false);
+  }
+
+  async function openCamera() {
+    if (busy) return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError("Camera access requires localhost or HTTPS and a supported browser.");
+      return;
+    }
+    try {
+      closeCamera();
+      const stream = await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:"environment"}});
+      cameraStreamRef.current = stream;
+      setCameraOpen(true);
+      setError(undefined);
+    } catch (cause) {
+      setError(cause instanceof Error ? `Camera access failed: ${cause.message}` : "Camera access was denied or unavailable.");
+    }
+  }
+
+  function captureCameraImage() {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth || !video.videoHeight) {
+      setError("Camera is still starting. Please try again in a moment.");
+      return;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext("2d");
+    if (!context) { setError("Camera frame could not be captured."); return; }
+    context.drawImage(video,0,0,canvas.width,canvas.height);
+    canvas.toBlob(blob=>{
+      if (!blob) { setError("Camera frame could not be encoded."); return; }
+      choose(new File([blob],`camera-${Date.now()}.jpg`,{type:"image/jpeg",lastModified:Date.now()}),"BROWSER_CAMERA_CAPTURE");
+      closeCamera();
+    },"image/jpeg",0.95);
   }
 
   function resetUpload() {
+    closeCamera();
     if (pollRef.current) window.clearInterval(pollRef.current);
     pollRef.current = undefined;
     pollingRef.current = false;
@@ -212,11 +268,11 @@ export function DeepfakeImageAnalysisPage() {
     if (pollRef.current) window.clearInterval(pollRef.current);
     setBusy(true); setError(undefined); setAnalysisProgress("Securely uploading image…");
     try {
-      const form = new FormData(); form.append("file",file); form.append("source_type","DIRECT_UPLOAD"); form.append("metadata",JSON.stringify({ upload_source:"FRONTEND_IMAGE_ANALYSIS", dataset_member:false }));
+      const form = new FormData(); form.append("file",file); form.append("source_type","DIRECT_UPLOAD"); form.append("metadata",JSON.stringify({ upload_source:uploadSource, dataset_member:false }));
       const asset = await apiRequest<Asset>("/deepfake-forensics/media-assets",{ method:"POST",body:form });
       setAnalysisProgress("Upload complete. Unified deepfake analysis is being prepared…");
       const accepted = await api.post<{ jobs:{id:string;job_type?:string}[] }>(`/deepfake-forensics/media-assets/${asset.id}/analyze`,{
-        analysis_modes:["DEEPFAKE","SYNTHETIC"],
+        analysis_modes:["DEEPFAKE","SYNTHETIC","OCR"],
         priority:"HIGH",
         execution_device:"CPU",
         force_reanalysis:false,
@@ -285,9 +341,10 @@ export function DeepfakeImageAnalysisPage() {
       api.get<ReviewWorkflow>(`/deepfake-forensics/analysis-jobs/${row.job.id}/review-workflow`).catch(()=>undefined),
     ]);
     const forensicJob = relatedJobs?.items.find(job=>job.job_type==="IMAGE_FORENSICS"&&job.status==="COMPLETED");
-    const forensicResult = forensicJob ? await api.get<ResultBundle>(`/deepfake-forensics/analysis-jobs/${forensicJob.id}/result`).catch(()=>undefined) : undefined;
+    const ocrJob = relatedJobs?.items.find(job=>job.job_type==="OCR_EXTRACTION"&&job.status==="COMPLETED");
+    const [forensicResult,ocrResult] = await Promise.all([forensicJob ? api.get<ResultBundle>(`/deepfake-forensics/analysis-jobs/${forensicJob.id}/result`).catch(()=>undefined) : undefined,ocrJob ? api.get<ResultBundle>(`/deepfake-forensics/analysis-jobs/${ocrJob.id}/result`).catch(()=>undefined) : undefined]);
     if (previewBlob) setDetailPreview(URL.createObjectURL(previewBlob));
-    setTrust(trustResult); setSecurityEvents(eventPage?.items || []); setForensics(forensicResult); setWorkflow(workflowResult); setDetailLoading(false);
+    setTrust(trustResult); setSecurityEvents(eventPage?.items || []); setForensics({...forensicResult,...ocrResult}); setWorkflow(workflowResult); setDetailLoading(false);
   }
 
   async function workflowAction(kind:"review"|"annotation"|"link") {
@@ -304,10 +361,22 @@ export function DeepfakeImageAnalysisPage() {
     <header className="df-header"><div><p className="eyebrow">AI & MEDIA FORENSICS</p><h1>Deepfake Image Analysis</h1><span>Upload one image to receive its current forensic verdict and evidence details.</span></div></header>
     {error && <div className="alert alert-error"><AlertTriangle size={17}/>{error}</div>}
 
+    <div className="df-camera-toolbar">
+      <button type="button" className="df-secondary" disabled={busy} onClick={()=>void openCamera()}><Camera size={17}/> Take a photo with camera</button>
+      <span>Capture creates a new image upload; it does not independently prove scene authenticity.</span>
+    </div>
+    {cameraOpen&&<div className="df-camera-backdrop" role="dialog" aria-modal="true" aria-label="Camera capture">
+      <div className="df-camera-panel">
+        <h2>Camera preview</h2>
+        <video ref={videoRef} autoPlay playsInline muted aria-label="Live camera preview"/>
+        <div className="df-upload-actions"><button type="button" className="df-primary" onClick={captureCameraImage}><Camera/> Capture photo</button><button type="button" className="df-secondary" onClick={closeCamera}>Cancel</button></div>
+      </div>
+    </div>}
+
     <div className="df-workspace">
       <article className="df-card df-upload"><div className="df-card-title"><span>NEW ANALYSIS</span><h2>Upload or paste image</h2></div><div className={`df-drop ${file?"selected":""}`} onDragOver={e=>e.preventDefault()} onDrop={(e:DragEvent)=>{e.preventDefault();choose(e.dataTransfer.files[0])}} onClick={()=>inputRef.current?.click()}>{preview?<img src={preview} alt="Selected evidence preview"/>:<><Upload size={35}/><strong>Drop an image here</strong><span>or choose a file</span><small>JPG · JPEG · PNG · WEBP</small></>}<input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={(e:ChangeEvent<HTMLInputElement>)=>choose(e.target.files?.[0]||null)}/></div>{!file&&<button type="button" className="df-paste" disabled={busy} onClick={()=>void pasteFromClipboard()}><ClipboardPaste/> Paste image <kbd>Ctrl + V</kbd></button>}{file&&<div className="df-file"><strong>{file.name}</strong><span>{file.type} · {size(file.size)}</span></div>}{analysisProgress&&<p className="df-analysis-progress">{busy&&<LoaderCircle className="spin"/>}{analysisProgress}</p>}<div className="df-upload-actions"><button className="df-primary" disabled={!file||busy} onClick={analyze}>{busy?<><LoaderCircle className="spin"/> Analyzing…</>:<><ShieldCheck/> Analyze image</>}</button>{file&&<button type="button" className="df-secondary" onClick={resetUpload}>{busy?"Analyze another image":"Choose another image"}</button>}</div></article>
 
-      <article className="df-card df-result">{selected?<><div className="df-verdict"><div><span>FORENSIC VERDICT</span><h2 className={isFake(activeVerdict)?"fake":isReal(activeVerdict)?"real":"pending"}>{activeVerdict.replaceAll("_"," ")}</h2><p>{active?.detection_summary || selected.job.error_message || `Analysis is ${selected.job.status.toLowerCase()}.`}</p></div><div className="df-confidence"><strong>{percent(active?.confidence_score)}</strong><span>Confidence</span></div></div><div className="df-probability"><span style={{width:`${Math.max(0,Math.min(100,authenticProbability||0))}%`}}/><i style={{width:`${Math.max(0,Math.min(100,deepfakeProbability||0))}%`}}/><div><b>{percent(authenticProbability)} Authentic</b><b>{percent(deepfakeProbability)} Deepfake</b></div></div><div className="df-reasons"><h3>{isFake(activeVerdict)?"Why manipulation is suspected":"Why this verdict was produced"}</h3>{explanation(active).map((item,index)=><p key={index}><CheckCircle2 size={15}/>{item}</p>)}</div>{selected.job.status==="COMPLETED"&&<p className="df-warning"><AlertTriangle/>{selected.job.job_type==="AI_GENERATED_IMAGE_DETECTION"?"The AI-generated image detector produced the strongest risk signal for this upload.":"The face-swap detector produced the strongest risk signal for this upload."} An authentic verdict is not proof of original camera provenance.</p>}<div className="df-detail-grid"><div><span>Model</span><strong>{selected.result?.evidence_analysis?.ai_model_name || selected.job.ai_model_id}</strong></div><div><span>Version</span><strong>{selected.result?.evidence_analysis?.ai_model_version || selected.job.ai_model_version_id}</strong></div><div><span>Faces detected</span><strong>{active?.faces_detected ?? "Not reported"}</strong></div><div><span>Analysis time</span><strong>{selected.job.processing_duration_ms ? `${(selected.job.processing_duration_ms/1000).toFixed(2)} sec` : "Not reported"}</strong></div></div></>:<div className="df-empty"><ShieldCheck size={42}/><h2>Select or analyze an image</h2><p>The backend verdict, probabilities and forensic reasons will appear here.</p></div>}</article>
+      <article className="df-card df-result">{selected?<><div className="df-verdict"><div><span>FORENSIC VERDICT</span><h2 className={isFake(activeVerdict)?"fake":isReal(activeVerdict)?"real":"pending"}>{activeVerdict.replaceAll("_"," ")}</h2><p>{active?.detection_summary || selected.job.error_message || `Analysis is ${selected.job.status.toLowerCase()}.`}</p></div><div className="df-confidence"><strong>{percent(active?.confidence_score)}</strong><span>Confidence</span></div></div><div className="df-probability"><span style={{width:`${Math.max(0,Math.min(100,authenticProbability||0))}%`}}/><i style={{width:`${Math.max(0,Math.min(100,deepfakeProbability||0))}%`}}/><div><b>{percent(authenticProbability)} Authentic</b><b>{percent(deepfakeProbability)} Deepfake</b></div></div><div className="df-reasons"><h3>{isFake(activeVerdict)?"Why manipulation is suspected":"Why this verdict was produced"}</h3>{explanation(active).map((item,index)=><p key={index}><CheckCircle2 size={15}/>{item}</p>)}</div>{selected.job.status==="COMPLETED"&&<p className="df-warning"><AlertTriangle/>{selected.job.job_type==="AI_GENERATED_IMAGE_DETECTION"?"The whole-image AI-generated detector produced the strongest risk signal for this upload.":"The active unified manipulation detector produced the strongest risk signal for this upload."} A model verdict is not proof of original camera provenance.</p>}<div className="df-detail-grid"><div><span>Model</span><strong>{selected.result?.evidence_analysis?.ai_model_name || selected.job.ai_model_id}</strong></div><div><span>Version</span><strong>{selected.result?.evidence_analysis?.ai_model_version || selected.job.ai_model_version_id}</strong></div><div><span>Faces detected</span><strong>{active?.faces_detected ?? "Not reported"}</strong></div><div><span>Analysis time</span><strong>{selected.job.processing_duration_ms ? `${(selected.job.processing_duration_ms/1000).toFixed(2)} sec` : "Not reported"}</strong></div></div></>:<div className="df-empty"><ShieldCheck size={42}/><h2>Select or analyze an image</h2><p>The backend verdict, probabilities and forensic reasons will appear here.</p></div>}</article>
     </div>
 
     {selected && <article className="df-card df-evidence"><div className="df-card-title"><span>EVIDENCE & INTEGRITY</span><h2>{selected.asset?.original_file_name || selected.job.job_number}</h2><button type="button" className="df-secondary" onClick={()=>void openDetails(selected)}><Eye size={15}/> View complete record</button></div><div className="df-evidence-grid"><div className="df-evidence-canvas">{preview && selected.asset?.original_file_name===file?.name?<img src={preview} alt="Analyzed evidence"/>:<FileImage size={62}/>} {active?.suspicious_regions?.map((region,index)=>{ const x=Number(region.x??region.left), y=Number(region.y??region.top), w=Number(region.width), h=Number(region.height); return [x,y,w,h].every(Number.isFinite)?<i key={index} style={{left:`${x}%`,top:`${y}%`,width:`${w}%`,height:`${h}%`}}/>:null })}</div><dl><div><dt>Media ID</dt><dd>{selected.asset?.asset_code || selected.job.media_asset_id}</dd></div><div><dt>SHA-256</dt><dd className="mono">{selected.asset?.file_hash || "Not returned"}</dd></div><div><dt>Integrity</dt><dd>{selected.asset?.hash_algorithm === "SHA256" ? "SHA-256 recorded" : selected.asset?.hash_algorithm || "Not reported"}</dd></div><div><dt>Encryption</dt><dd>{selected.asset?.is_encrypted ? selected.asset.encryption_algorithm || "Encrypted" : "Not reported as encrypted"}</dd></div><div><dt>Uploaded</dt><dd>{when(selected.asset?.uploaded_at)}</dd></div><div><dt>Completed</dt><dd>{when(selected.job.completed_at)}</dd></div></dl></div></article>}

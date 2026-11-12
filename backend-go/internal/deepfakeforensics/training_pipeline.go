@@ -515,6 +515,14 @@ func (s *TrainingService) DecideApproval(ctx context.Context, organizationID, ac
 			configurationValues["input_height"] = imageSize
 		}
 	}
+	switch NormalizeConstant(fmt.Sprint(configurationValues["detector_scope"])) {
+	case JobTypeSyntheticImage:
+		configurationValues["ensemble_role"] = "SYNTHETIC_IMAGE"
+	case JobTypeDeepfakeImage:
+		configurationValues["ensemble_role"] = "GENERAL_DEEPFAKE"
+	default:
+		configurationValues["ensemble_role"] = "GENERAL_DEEPFAKE"
+	}
 	configuration, _ := json.Marshal(configurationValues)
 	_, err = tx.Exec(ctx, `INSERT INTO ai_model_versions (id,ai_model_id,version_number,version_name,model_file_path,model_file_hash,hash_algorithm,model_format,training_dataset_name,training_dataset_version,training_record_count,validation_accuracy,configuration,is_default,status,created_by,trained_at,validated_at,created_at,updated_at) SELECT $1,$2,$3,$4,$5,$6,'SHA256','PTH',$7,$8,j.train_record_count,$9,$10,false,'VALIDATED',$11,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP FROM ml_training_jobs j WHERE j.id=$12`, versionID, *modelID, request.VersionNumber, "Trained "+request.VersionNumber, artifactPath, strings.ToLower(artifactHash), datasetName, datasetVersion, validationAccuracy, configuration, actorID, jobID)
 	if err != nil {

@@ -25,6 +25,7 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 
 func (r *Repository) AssignPermissions(
 	ctx context.Context,
+	organizationID uuid.UUID,
 	roleID uuid.UUID,
 	grantedBy *uuid.UUID,
 	req AssignPermissionsRequest,
@@ -45,10 +46,11 @@ func (r *Repository) AssignPermissions(
 			SELECT 1
 			FROM roles
 			WHERE id = $1
+			AND organization_id = $2
 			AND deleted_at IS NULL
 		)
 		`,
-		roleID,
+		roleID, organizationID,
 	).Scan(&roleExists)
 	if err != nil {
 		return nil, err
@@ -221,6 +223,7 @@ func (r *Repository) AssignPermissions(
 
 func (r *Repository) ListRolePermissions(
 	ctx context.Context,
+	organizationID uuid.UUID,
 	roleID uuid.UUID,
 ) (*ListRolePermissionsResponse, error) {
 
@@ -233,10 +236,11 @@ func (r *Repository) ListRolePermissions(
 			SELECT 1
 			FROM roles
 			WHERE id = $1
+			AND organization_id = $2
 			AND deleted_at IS NULL
 		)
 		`,
-		roleID,
+		roleID, organizationID,
 	).Scan(&roleExists)
 	if err != nil {
 		return nil, err
@@ -325,6 +329,7 @@ func (r *Repository) ListRolePermissions(
 
 func (r *Repository) RemovePermission(
 	ctx context.Context,
+	organizationID uuid.UUID,
 	roleID uuid.UUID,
 	permissionID uuid.UUID,
 ) error {
@@ -335,6 +340,7 @@ func (r *Repository) RemovePermission(
 			is_active = FALSE
 		WHERE
 			role_id = $1
+			AND EXISTS (SELECT 1 FROM roles r WHERE r.id = role_permissions.role_id AND r.organization_id = $3 AND r.deleted_at IS NULL)
 			AND permission_id = $2
 			AND is_active = TRUE
 	`
@@ -344,6 +350,7 @@ func (r *Repository) RemovePermission(
 		query,
 		roleID,
 		permissionID,
+		organizationID,
 	)
 	if err != nil {
 		return err
@@ -358,6 +365,7 @@ func (r *Repository) RemovePermission(
 
 func (r *Repository) ReplacePermissions(
 	ctx context.Context,
+	organizationID uuid.UUID,
 	roleID uuid.UUID,
 	grantedBy *uuid.UUID,
 	req ReplacePermissionsRequest,
@@ -378,10 +386,11 @@ func (r *Repository) ReplacePermissions(
 			SELECT 1
 			FROM roles
 			WHERE id = $1
+			AND organization_id = $2
 			AND deleted_at IS NULL
 		)
 		`,
-		roleID,
+		roleID, organizationID,
 	).Scan(&roleExists)
 	if err != nil {
 		return nil, err

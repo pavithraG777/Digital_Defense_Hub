@@ -156,6 +156,7 @@ func (r *Repository) CreateRole(
 func (r *Repository) ListRoles(
 	ctx context.Context,
 	organizationID uuid.UUID,
+	global bool,
 	req ListRolesRequest,
 ) ([]RoleListItem, int64, error) {
 	offset := (req.Page - 1) * req.PageSize
@@ -167,7 +168,7 @@ func (r *Repository) ListRoles(
 		`
 		SELECT COUNT(*)
 		FROM roles
-		WHERE organization_id = $1
+				WHERE ($4::boolean OR organization_id = $1)
 		  AND deleted_at IS NULL
 		  AND (
 				$2 = ''
@@ -183,6 +184,7 @@ func (r *Repository) ListRoles(
 		organizationID,
 		req.Search,
 		req.Status,
+		global,
 	).Scan(&totalCount)
 	if err != nil {
 		return nil, 0, err
@@ -203,7 +205,7 @@ func (r *Repository) ListRoles(
 			priority_level,
 			status
 		FROM roles
-		WHERE organization_id = $1
+				WHERE ($4::boolean OR organization_id = $1)
 		  AND deleted_at IS NULL
 		  AND (
 				$2 = ''
@@ -218,12 +220,13 @@ func (r *Repository) ListRoles(
 		ORDER BY
 			priority_level ASC,
 			role_name ASC
-		LIMIT $4
-		OFFSET $5
+				LIMIT $5
+				OFFSET $6
 		`,
 		organizationID,
 		req.Search,
 		req.Status,
+		global,
 		req.PageSize,
 		offset,
 	)

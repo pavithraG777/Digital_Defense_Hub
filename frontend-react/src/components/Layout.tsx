@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { Activity, Bell, BellRing, BookOpen, Bot, Building2, Camera, ChevronLeft, ChevronRight, FileClock, FileWarning, FolderSearch2, GitBranch, HeartPulse, Inbox, KeyRound, LayoutDashboard, LogOut, Menu, Microscope, Pencil, Radar, ScanSearch, Search, ShieldAlert, ShieldCheck, Siren, Users, Workflow, X } from "lucide-react";
+import { Activity, Bell, BellRing, BookOpen, Bot, Building2, Camera, ChevronLeft, ChevronRight, FileClock, FileWarning, FolderSearch2, GitBranch, HeartPulse, Inbox, KeyRound, LayoutDashboard, LogOut, Menu, Microscope, Orbit, Pencil, Radar, ScanSearch, Search, ShieldAlert, ShieldCheck, Siren, Users, Workflow, X } from "lucide-react";
 import type { AuthUser } from "../types";
 import { api, session } from "../lib/api";
 import { BrandLogo } from "./BrandLogo";
@@ -9,12 +9,27 @@ import { BrandLogo } from "./BrandLogo";
 const navigation = [
   { label: "Overview", items: [{ to: "/dashboard", label: "Dashboard", icon: LayoutDashboard }] },
   { label: "Organization", items: [{ to: "/organizations", label: "Organizations", icon: Building2 }, { to: "/users", label: "Users", icon: Users }, { to: "/roles", label: "Roles", icon: ShieldCheck }, { to: "/permissions", label: "Permissions", icon: KeyRound }] },
-  { label: "Deception", items: [{ to: "/honeytokens", label: "Honeytokens", icon: KeyRound }, { to: "/canary-files", label: "Canary Files", icon: FileWarning }] },
-  { label: "Security Operations", items: [{ to: "/threats", label: "Threat Center", icon: ShieldAlert }, { to: "/threat-score", label: "Threat Score", icon: Activity }, { to: "/incidents", label: "Incident Response", icon: Siren }, { to: "/investigations", label: "Investigations", icon: FolderSearch2 }, { to: "/attack-stories", label: "Attack Stories", icon: GitBranch }] },
+  { label: "Deception", items: [{ to: "/honeytokens", label: "Honeytokens", icon: KeyRound }, { to: "/canary-files", label: "Canary Files", icon: FileWarning }, { to: "/module/ransomware/dashboard", label: "Ransomware Detection", icon: ShieldAlert }, { to: "/module/adaptive-deception/fingerprints", label: "Adaptive Deception", icon: Orbit }] },
+  { label: "Security Operations", items: [{ to: "/threats", label: "Threat Center", icon: ShieldAlert }, { to: "/threat-score", label: "Threat Score", icon: Activity }, { to: "/incidents", label: "Incident Response", icon: Siren }, { to: "/dfir", label: "DFIR Workspace", icon: Microscope }, { to: "/investigations", label: "Investigations", icon: FolderSearch2 }, { to: "/attack-stories", label: "Attack Stories", icon: GitBranch }] },
   { label: "AI Forensics", items: [{ to: "/deepfake-image-analysis", label: "Image Analysis", icon: Bot }, { to: "/module/deepfake/analysis", label: "Analysis History", icon: FileClock }, { to: "/evidence-vault", label: "Evidence Vault", icon: BookOpen }, { to: "/module/deepfake/reports", label: "Forensic Reports", icon: BookOpen }] },
-  { label: "Operational Modules", items: [{ to: "/module/exposure-operations/assets", label: "Exposure Management", icon: ScanSearch }, { to: "/module/detection-operations/alerts", label: "Detection Operations", icon: Radar }, { to: "/module/governance-operations/access", label: "Security Governance", icon: ShieldCheck }, { to: "/module/analysis-operations/malware", label: "Analysis Operations", icon: Microscope }, { to: "/module/response-automation/analysis", label: "Response Automation", icon: Workflow }] },
+  { label: "Operational Modules", items: [{ to: "/module/pre-encryption/dashboard", label: "Pre-Encryption", icon: ScanSearch }, { to: "/module/exposure-operations/assets", label: "Exposure Management", icon: ScanSearch }, { to: "/module/detection-operations/alerts", label: "Detection Operations", icon: Radar }, { to: "/module/governance-operations/access", label: "Security Governance", icon: ShieldCheck }, { to: "/module/analysis-operations/malware", label: "Analysis Operations", icon: Microscope }, { to: "/module/response-automation/analysis", label: "Response Automation", icon: Workflow }] },
   { label: "System", items: [{ to: "/notifications", label: "Notifications", icon: Inbox }, { to: "/audit-activity", label: "Audit Activity", icon: Activity }, { to: "/module/system/health", label: "System Health", icon: HeartPulse }] },
 ];
+
+const navigationPermissions: Record<string, string[]> = {
+  "/organizations": ["ORGANIZATION_VIEW", "ORGANIZATION_MANAGE"],
+  "/users": ["USER_VIEW", "USER_VIEW_DETAILS"],
+  "/roles": ["ROLE_VIEW"],
+  "/permissions": ["PERMISSION_VIEW", "ROLE_MANAGE_PERMISSIONS"],
+  "/honeytokens": ["HONEYTOKEN_VIEW"],
+  "/canary-files": ["CANARY_FILE_VIEW"],
+  "/module/ransomware/dashboard": ["THREAT_VIEW", "PRE_ENCRYPTION_VIEW"],
+  "/module/adaptive-deception/fingerprints": ["THREAT_VIEW", "CANARY_FILE_VIEW"],
+  "/module/pre-encryption/dashboard": ["THREAT_VIEW", "PRE_ENCRYPTION_VIEW"],
+  "/threats": ["THREAT_VIEW"],
+  "/incidents": ["INCIDENT_VIEW"],
+  "/audit-activity": ["AUDIT_LOG_VIEW"],
+};
 
 type SecurityEvent = Record<string, unknown> & { id: string };
 
@@ -22,17 +37,22 @@ function playSecurityAlertTone() {
   const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
   if (!AudioContextClass) return;
   const context = new AudioContextClass();
-  [0, .32].forEach((offset) => {
+  const now = context.currentTime;
+  const gain = context.createGain();
+  gain.gain.setValueAtTime(.0001, now);
+  gain.gain.exponentialRampToValueAtTime(.32, now + .015);
+  gain.gain.setValueAtTime(.32, now + .68);
+  gain.gain.exponentialRampToValueAtTime(.0001, now + .82);
+  gain.connect(context.destination);
+  [880, 1175, 880].forEach((frequency, index) => {
     const oscillator = context.createOscillator();
-    const gain = context.createGain();
-    oscillator.frequency.value = 920;
-    gain.gain.setValueAtTime(.14, context.currentTime + offset);
-    gain.gain.exponentialRampToValueAtTime(.001, context.currentTime + offset + .22);
-    oscillator.connect(gain).connect(context.destination);
-    oscillator.start(context.currentTime + offset);
-    oscillator.stop(context.currentTime + offset + .23);
+    oscillator.type = "square";
+    oscillator.frequency.value = frequency;
+    oscillator.connect(gain);
+    oscillator.start(now + index * .25);
+    oscillator.stop(now + index * .25 + .18);
   });
-  window.setTimeout(() => void context.close(), 900);
+  window.setTimeout(() => void context.close(), 1200);
 }
 
 export function Layout() {
@@ -51,6 +71,12 @@ export function Layout() {
   const [securityAlert, setSecurityAlert] = useState<SecurityEvent | null>(null);
   const [query, setQuery] = useState("");
   const [user, setUser] = useState<AuthUser | null>(() => session.getUser<AuthUser>());
+  const isSuperAdmin = user?.roles?.some((role) => role.toUpperCase() === "SUPER_ADMIN") ?? false;
+  const isOrganizationAdmin = !isSuperAdmin && (user?.roles || []).some((role) => {
+    const normalized = role.toUpperCase();
+    return normalized.includes("ADMIN") || normalized === "MANAGER";
+  });
+  const grantedPermissions = useMemo(() => new Set((user?.permissions || []).map((permission) => permission.toUpperCase())), [user?.permissions]);
   const photoStorageKey = `ddh.profile-photo.${user?.id || "anonymous"}`;
   const [profilePhoto, setProfilePhoto] = useState(() => localStorage.getItem(photoStorageKey) || "");
   const securityFeedInitialized = useRef(false);
@@ -81,9 +107,10 @@ export function Layout() {
           const event = events.find((item) => !seenSecurityEventIDs.current.has(item.id) && (item.source_type === "CANARY_FILE" || item.source_type === "HONEYTOKEN" || item.severity === "CRITICAL"));
           if (event && active) {
             setSecurityAlert(event);
-            if (localStorage.getItem("ddh_deception_alerts") === "enabled") {
+            const deceptionWorkspaceOpen = window.location.pathname === "/canary-files" || window.location.pathname === "/honeytokens";
+            if (!deceptionWorkspaceOpen && localStorage.getItem("ddh_deception_alerts") === "enabled") {
               playSecurityAlertTone();
-              if ("Notification" in window && Notification.permission === "granted") new Notification("Digital Defense Hub security alert", { body: `${String(event.event_type || "Security event")} · ${String(event.file_name || "Unknown file")}` });
+              if ("Notification" in window && Notification.permission === "granted") new Notification("Digital Defense Hub security alert", { body: `${String(event.event_type || "Security event")} · ${String(event.file_name || "Unknown file")}`, silent: true });
             }
           }
         }
@@ -134,7 +161,16 @@ export function Layout() {
     finally { setDrawerLoading(false); }
   }
 
-  const searchable = useMemo(() => navigation.flatMap((group) => group.items), []);
+  const visibleNavigation = useMemo(() => navigation.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => {
+      if (isSuperAdmin || item.to === "/dashboard" || item.to === "/notifications") return true;
+      if (isOrganizationAdmin && (item.to === "/users" || item.to === "/roles" || item.to === "/module/ransomware/dashboard")) return true;
+      const required = navigationPermissions[item.to];
+      return !required || required.some((permission) => grantedPermissions.has(permission));
+    }),
+  })).filter((group) => group.items.length > 0), [grantedPermissions, isOrganizationAdmin, isSuperAdmin]);
+  const searchable = useMemo(() => visibleNavigation.flatMap((group) => group.items), [visibleNavigation]);
   function submitSearch(event: FormEvent) {
     event.preventDefault();
     const needle = query.trim().toLowerCase();
@@ -156,7 +192,7 @@ export function Layout() {
       <div className="sidebar-top">
         <div className="brand command-brand"><BrandLogo compact={collapsed} /><button className="sidebar-close" type="button" aria-label="Close navigation" onClick={() => setMobileOpen(false)}><X size={19} /></button></div>
         <nav aria-label="Primary navigation" className="command-navigation">
-          {navigation.map((group) => <section className="nav-group" key={group.label}>
+          {visibleNavigation.map((group) => <section className="nav-group" key={group.label}>
             {!collapsed && <p>{group.label}</p>}
             {group.items.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} title={collapsed ? label : undefined} className={`nav-link${location.pathname === to ? " active" : ""}`} onClick={() => setMobileOpen(false)}><Icon size={17} /><span>{label}</span>{!collapsed && <ChevronRight size={13} className="nav-chevron" />}</NavLink>)}
           </section>)}

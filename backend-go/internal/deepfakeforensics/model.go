@@ -144,7 +144,8 @@ type AnalysisModelReference struct {
 // AnalysisSource joins the media asset with its selected
 // model before it is submitted to the offline engine.
 type AnalysisSource struct {
-	Asset MediaAnalysisAsset     `json:"asset"`
-	Model AnalysisModelReference `json:"model"`
-	Job   AIAnalysisJob          `json:"job"`
+	Asset  MediaAnalysisAsset       `json:"asset"`
+	Model  AnalysisModelReference   `json:"model"`
+	Models []AnalysisModelReference `json:"models,omitempty"`
+	Job    AIAnalysisJob            `json:"job"`
 }

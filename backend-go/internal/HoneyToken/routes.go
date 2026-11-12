@@ -17,6 +17,9 @@ const (
 	permissionHoneytokenCreate           = "HONEYTOKEN_CREATE"
 	permissionHoneytokenView             = "HONEYTOKEN_VIEW"
 	permissionHoneytokenViewAccessLog    = "HONEYTOKEN_VIEW_ACCESS_LOG"
+	permissionHoneytokenDeploy           = "HONEYTOKEN_DEPLOY"
+	permissionHoneytokenDeactivate       = "HONEYTOKEN_DEACTIVATE"
+	permissionHoneytokenVerify           = "HONEYTOKEN_VERIFY"
 	permissionCanaryFileCreate           = "CANARY_FILE_CREATE"
 	permissionCanaryFileView             = "CANARY_FILE_VIEW"
 	permissionCanaryFileViewEvents       = "CANARY_FILE_VIEW_EVENTS"
@@ -58,6 +61,12 @@ func RegisterRoutes(
 			permissionHoneytokenCreate,
 		),
 		handler.RegisterProtectedFile,
+	)
+
+	protectedFiles.GET(
+		"",
+		middleware.RequirePermission(databasePool, permissionHoneytokenView),
+		handler.ListProtectedFiles,
 	)
 
 	protectedFiles.GET(
@@ -124,6 +133,8 @@ func RegisterEncryptionKeyRoutes(
 		),
 		handler.GetActiveEncryptionKey,
 	)
+
+	encryptionKeys.GET("", middleware.RequirePermission(databasePool, permissionOrganizationManageSecurity), handler.ListEncryptionKeys)
 }
 
 func validateRouteDependencies(
@@ -209,21 +220,36 @@ func RegisterHoneytokenRoutes(
 
 	honeytokens.POST(
 		"/:id/deploy",
-		middleware.RequirePermission(databasePool, permissionOrganizationManageSecurity),
+		middleware.RequireAnyPermission(databasePool, permissionHoneytokenDeploy, permissionOrganizationManageSecurity),
 		handler.DeployHoneytoken,
 	)
 
 	honeytokens.PATCH(
 		"/:id/status",
-		middleware.RequirePermission(databasePool, permissionOrganizationManageSecurity),
+		middleware.RequireAnyPermission(databasePool, permissionHoneytokenDeactivate, permissionOrganizationManageSecurity),
 		handler.DeactivateHoneytoken,
 	)
 
 	honeytokens.POST(
 		"/:id/validate",
-		middleware.RequirePermission(databasePool, permissionOrganizationManageSecurity),
+		middleware.RequireAnyPermission(databasePool, permissionHoneytokenVerify, permissionOrganizationManageSecurity),
 		handler.ValidateHoneytoken,
 	)
+	honeytokens.POST(
+		"/:id/simulate-access",
+		middleware.RequireAnyPermission(databasePool, permissionHoneytokenVerify, permissionOrganizationManageSecurity),
+		handler.SimulateHoneytokenAccess,
+	)
+}
+
+// RegisterHoneytokenObservationRoutes exposes the connector collector before
+// authentication middleware. It never reveals whether a supplied value
+// matched, and the service records the request-derived source address.
+func RegisterHoneytokenObservationRoutes(publicRouter *gin.RouterGroup, handler *HoneytokenHandler) {
+	if publicRouter == nil || handler == nil || !handler.isAvailable() {
+		panic("honeytoken observation route dependencies are required")
+	}
+	publicRouter.POST("/honeytoken-observations/:id", handler.ObserveHoneytoken)
 }
 
 // RegisterCanaryRoutes adds canary generation, retrieval and deployment
@@ -303,6 +329,12 @@ func registerCanaryRoutes(
 		handler.DeployCanaryFile,
 	)
 
+	canaryFiles.POST(
+		"/:id/local/:action",
+		requirePermission(databasePool, permissionOrganizationManageSecurity),
+		handler.LaunchDeployedCanary,
+	)
+
 	canaryFiles.PATCH(
 		"/:id/status",
 		requirePermission(databasePool, permissionOrganizationManageSecurity),
@@ -350,6 +382,18 @@ func registerFileEventRoutes(
 			permissionOrganizationManageSecurity,
 		),
 		handler.CreateFileEvent,
+	)
+
+	fileEvents.POST(
+		"/canary/:id/simulate-access",
+		requirePermission(databasePool, permissionOrganizationManageSecurity),
+		handler.SimulateCanaryAccess,
+	)
+
+	fileEvents.POST(
+		"/canary/:id/simulate/:event_type",
+		requirePermission(databasePool, permissionOrganizationManageSecurity),
+		handler.SimulateCanaryEvent,
 	)
 
 	fileEvents.GET(

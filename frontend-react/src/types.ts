@@ -7,6 +7,7 @@ export type ApiEnvelope<T> = {
 
 export type AuthUser = {
   id: string;
+  organization_id: string;
   username: string;
   official_email: string;
   display_name: string;
@@ -15,6 +16,7 @@ export type AuthUser = {
   must_change_password: boolean;
   mfa_enabled: boolean;
   roles: string[];
+  permissions: string[];
 };
 
 export type LoginResult = {
@@ -60,7 +62,7 @@ export type ApiSource = {
 export type ActionField = {
   name: string;
   label: string;
-  type?: "text" | "email" | "password" | "number" | "textarea" | "select" | "json";
+  type?: "text" | "email" | "password" | "number" | "datetime-local" | "textarea" | "select" | "json";
   required?: boolean;
   placeholder?: string;
   options?: Array<{ label: string; value: string }>;

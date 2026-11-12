@@ -2,6 +2,7 @@ package honeytoken
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/mail"
@@ -17,8 +18,19 @@ var ErrHoneytokenServiceUnavailable = errors.New(
 
 // HoneytokenService manages organization-owned honeytokens.
 type HoneytokenService struct {
-	repository *Repository
-	generator  *HoneytokenGenerator
+	repository       *Repository
+	generator        *HoneytokenGenerator
+	fileEventService *FileEventService
+}
+
+// SetFileEventService connects confirmed honeytoken interactions to the
+// normal event -> threat -> incident pipeline.
+func (s *HoneytokenService) SetFileEventService(service *FileEventService) error {
+	if s == nil || service == nil {
+		return errors.New("file event service is required")
+	}
+	s.fileEventService = service
+	return nil
 }
 
 // NewHoneytokenService creates the honeytoken business service.
@@ -137,12 +149,12 @@ func (s *HoneytokenService) CreateHoneytoken(
 
 	honeytokenID := uuid.New()
 
-	generatedValue, err := s.generator.Generate(
-		ctx,
-		organizationID,
-		honeytokenID,
-		req.HoneytokenType,
-	)
+	var generatedValue *honeytokenGenerationResult
+	if strings.TrimSpace(req.ProtectedValue) != "" {
+		generatedValue, err = s.generator.ProtectExisting(ctx, organizationID, honeytokenID, req.HoneytokenType, req.ProtectedValue)
+	} else {
+		generatedValue, err = s.generator.Generate(ctx, organizationID, honeytokenID, req.HoneytokenType)
+	}
 	if err != nil {
 		return nil, fmt.Errorf(
 			"failed to generate honeytoken value: %w",
@@ -212,10 +224,15 @@ func (s *HoneytokenService) CreateHoneytoken(
 		)
 	}
 
-	return buildCreateHoneytokenResponse(
-		token,
-		string(generatedValue.plainValue),
-	), nil
+	plainResponse := string(generatedValue.plainValue)
+	valueMode := "GENERATED_DECOY"
+	if strings.TrimSpace(req.ProtectedValue) != "" {
+		plainResponse = ""
+		valueMode = "EXISTING_VALUE"
+	}
+	response := buildCreateHoneytokenResponse(token, plainResponse)
+	response.ValueMode = valueMode
+	return response, nil
 }
 
 // GetHoneytoken returns safe metadata without exposing encrypted
@@ -268,6 +285,8 @@ func (s *HoneytokenService) GetHoneytoken(
 func (s *HoneytokenService) ListHoneytokens(
 	ctx context.Context,
 	organizationID uuid.UUID,
+	includePlatformOwned bool,
+	includeTenantAdminOwned bool,
 	req ListHoneytokensRequest,
 ) (*ListHoneytokensResponse, error) {
 	if err := s.validate(); err != nil {
@@ -302,13 +321,15 @@ func (s *HoneytokenService) ListHoneytokens(
 		ctx,
 		organizationID,
 		HoneytokenListFilter{
-			Page:           req.Page,
-			Limit:          req.Limit,
-			Search:         req.Search,
-			HoneytokenType: req.HoneytokenType,
-			Classification: req.Classification,
-			Status:         req.Status,
-			DepartmentID:   departmentID,
+			IncludePlatformOwned:    includePlatformOwned,
+			IncludeTenantAdminOwned: includeTenantAdminOwned,
+			Page:                    req.Page,
+			Limit:                   req.Limit,
+			Search:                  req.Search,
+			HoneytokenType:          req.HoneytokenType,
+			Classification:          req.Classification,
+			Status:                  req.Status,
+			DepartmentID:            departmentID,
 		},
 	)
 	if err != nil {
@@ -425,6 +446,7 @@ func normalizeCreateHoneytokenRequest(
 	req.TargetSystem = strings.TrimSpace(
 		req.TargetSystem,
 	)
+	req.ProtectedValue = strings.TrimSpace(req.ProtectedValue)
 
 	req.Classification = strings.ToUpper(
 		strings.TrimSpace(req.Classification),
@@ -495,6 +517,10 @@ func validateCreateHoneytokenRequest(
 		return fmt.Errorf(
 			"target system must not exceed 100 characters",
 		)
+	}
+
+	if req.ProtectedValue != "" && (len(req.ProtectedValue) < 4 || len(req.ProtectedValue) > 8192) {
+		return fmt.Errorf("protected value must contain between 4 and 8192 characters")
 	}
 
 	if !isSupportedHoneytokenClassification(
@@ -1033,11 +1059,94 @@ func (s *HoneytokenService) ValidateHoneytoken(
 		)
 	}
 
+	// A confirmed decoy-value match is a real deception signal. Persist it as
+	// an immutable security event so the Threat Worker creates/links the
+	// HONEYTOKEN_ACCESS threat and its automatic incident.
+	if s.fileEventService != nil {
+		honeytokenIDValue := honeytokenID.String()
+		departmentID := ""
+		if triggeredToken.DepartmentID != nil {
+			departmentID = triggeredToken.DepartmentID.String()
+		}
+		location := "honeytoken://" + triggeredToken.HoneytokenCode
+		if triggeredToken.DeploymentLocation != nil && strings.TrimSpace(*triggeredToken.DeploymentLocation) != "" {
+			location = strings.TrimSpace(*triggeredToken.DeploymentLocation)
+		}
+		detectionMethod := DetectionMethodRuleBased
+		sourceIP, _ := ctx.Value(honeytokenObservationSourceIPKey{}).(string)
+		userAgent, _ := ctx.Value(honeytokenObservationUserAgentKey{}).(string)
+		targetContext, _ := ctx.Value(honeytokenObservationTargetContextKey{}).(string)
+		simulation, _ := ctx.Value(honeytokenObservationSimulationKey{}).(bool)
+		metadata, _ := json.Marshal(map[string]any{
+			"honeytoken_code": triggeredToken.HoneytokenCode,
+			"honeytoken_type": triggeredToken.HoneytokenType,
+			"confirmed_match": true,
+			"access_decision": "DENIED",
+			"automation":      "HONEYTOKEN_TRIGGER_TO_INCIDENT",
+			"source_ip":       sourceIP,
+			"user_agent":      userAgent,
+			"target_context":  targetContext,
+			"simulation":      simulation,
+			"simulated_source_ip": func() string {
+				if simulation {
+					return sourceIP
+				}
+				return ""
+			}(),
+		})
+		request := CreateFileEventRequest{
+			HoneytokenID:    &honeytokenIDValue,
+			SourceType:      FileEventSourceHoneytoken,
+			EventType:       EventTypeRead,
+			EventSource:     FileEventCollectorAPI,
+			DetectionMethod: &detectionMethod,
+			FileName:        triggeredToken.HoneytokenName,
+			FilePath:        location,
+			Metadata:        metadata,
+			RawEvent:        metadata,
+			OccurredAt:      time.Now().UTC().Format(time.RFC3339Nano),
+		}
+		if departmentID != "" {
+			request.DepartmentID = &departmentID
+		}
+		if _, eventErr := s.fileEventService.CreateFileEvent(ctx, organizationID, nil, sourceIP, request); eventErr != nil {
+			return nil, fmt.Errorf("honeytoken was triggered but its incident event could not be recorded: %w", eventErr)
+		}
+	}
+
 	return buildValidateHoneytokenResponse(
 		triggeredToken,
 		true,
 		true,
 	), nil
+}
+
+type honeytokenObservationSourceIPKey struct{}
+type honeytokenObservationUserAgentKey struct{}
+type honeytokenObservationTargetContextKey struct{}
+type honeytokenObservationSimulationKey struct{}
+
+// ValidateExternalObservation resolves organization ownership internally and
+// runs the same cryptographic validator used by authenticated operations.
+func (s *HoneytokenService) ValidateExternalObservation(ctx context.Context, honeytokenID uuid.UUID, req *ObserveHoneytokenRequest, sourceIP, userAgent string) error {
+	if req == nil {
+		return fmt.Errorf("observation request is required")
+	}
+	token, err := s.repository.FindHoneytokenByGlobalID(ctx, honeytokenID)
+	if err != nil {
+		return err
+	}
+	ctx = context.WithValue(ctx, honeytokenObservationSourceIPKey{}, strings.TrimSpace(sourceIP))
+	ctx = context.WithValue(ctx, honeytokenObservationUserAgentKey{}, strings.TrimSpace(userAgent))
+	ctx = context.WithValue(ctx, honeytokenObservationTargetContextKey{}, strings.TrimSpace(req.TargetContext))
+	result, err := s.ValidateHoneytoken(ctx, token.OrganizationID, token.ID, &ValidateHoneytokenRequest{ObservedValue: req.ObservedValue})
+	if err != nil {
+		return err
+	}
+	if result == nil || !result.Valid {
+		return ErrHoneytokenNotFound
+	}
+	return nil
 }
 
 func validateDeployHoneytokenRequest(

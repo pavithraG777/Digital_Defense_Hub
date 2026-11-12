@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Activity, BellRing, Bot, BrainCircuit, Building2, DatabaseZap, FileSearch, FileWarning, Fingerprint, KeyRound, Network, RefreshCw, ScanSearch, ShieldAlert, ShieldCheck, Siren, Users } from "lucide-react";
 import { Link } from "react-router-dom";
 import { DashboardLiveBackground } from "../components/DashboardLiveBackground";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
+import { session } from "../lib/api";
+import type { AuthUser } from "../types";
 
 type Organization = { id: string; organization_code?: string; code?: string; legal_name?: string; display_name?: string; organization_type?: string; status?: string; created_at?: string };
 type RecordValue = Record<string, unknown>;
@@ -26,7 +28,7 @@ function asList(value: unknown): RecordValue[] {
   return [];
 }
 function totalFrom(value: unknown, fallback: number) { return value && typeof value === "object" && "total" in value ? Number((value as RecordValue).total || 0) : fallback; }
-function orgName(org: Organization) { return org.display_name || org.legal_name || org.organization_code || org.code || "Unnamed organization"; }
+function orgName(org?: Organization) { return org?.display_name || org?.legal_name || org?.organization_code || org?.code || "Your organization"; }
 function recordOrgId(record: RecordValue) { return String(record.organization_id || record.tenant_id || record.organizationId || ""); }
 function statusTone(status?: string) { const value = (status || "UNKNOWN").toUpperCase(); return value === "ACTIVE" ? "good" : value === "PENDING" ? "warn" : value === "REJECTED" || value === "SUSPENDED" ? "bad" : "neutral"; }
 function riskTone(level?: string) { const value = (level || "NOT_AVAILABLE").toLowerCase(); return ["critical", "high", "medium", "low"].includes(value) ? value : "neutral"; }
@@ -53,8 +55,12 @@ function operationSummary(kind: string, value: unknown) {
 }
 
 export function DashboardPage() {
+  const user = session.getUser<AuthUser>();
+  const isSuperAdmin = user?.roles?.some((role) => role.toUpperCase() === "SUPER_ADMIN") ?? false;
+  const grantedPermissions = useMemo(() => new Set((user?.permissions || []).map((permission) => permission.toUpperCase())), [user?.permissions]);
+  const can = (...codes: string[]) => isSuperAdmin || codes.some((code) => grantedPermissions.has(code));
   const [data, setData] = useState<LoadState>(emptyState);
-  const [selectedOrg, setSelectedOrg] = useState("all");
+  const [selectedOrg, setSelectedOrg] = useState(isSuperAdmin ? "all" : user?.organization_id || "");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
@@ -64,7 +70,7 @@ export function DashboardPage() {
     background ? setRefreshing(true) : setLoading(true);
     const requests = ["/admin/organizations", "/admin/users", "/threats", "/incidents", "/deepfake-forensics/health", "/file-events?source_type=HONEYTOKEN&page=1&page_size=100", "/file-events?source_type=CANARY_FILE&page=1&page_size=100", "/security-scores/organizations", "/my-notifications", "/admin/audit-activity?page=1&page_size=100", "/file-events?page=1&page_size=100", "/pre-encryption-detections", "/ai-risk/scores", "/adaptive-deception/fingerprints", "/deepfake-forensics/analysis-jobs", "/deepfake-forensics/forensic-reports?page=1&page_size=50", "/model-security/integrity", "/health", "/offline-sync/queue", "/investigation-cases", "/intelligence/dashboard"] as const;
     const results = await Promise.allSettled(requests.map((path) => api.get<unknown>(path)));
-    const failed = results.flatMap((result, index) => result.status === "rejected" ? [requests[index]] : []);
+    const failed = results.flatMap((result, index) => result.status === "rejected" && (!(result.reason instanceof ApiError) || ![403, 404].includes(result.reason.status)) ? [requests[index]] : []);
     setErrors(failed);
     setData((previous) => ({
       organizations: results[0].status === "fulfilled" ? asList(results[0].value) as Organization[] : previous.organizations,
@@ -87,6 +93,9 @@ export function DashboardPage() {
     setLoading(false); setRefreshing(false);
   }
   useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    if (!isSuperAdmin && !selectedOrg && data.organizations[0]?.id) setSelectedOrg(data.organizations[0].id);
+  }, [data.organizations, isSuperAdmin, selectedOrg]);
 
   const scoped = useMemo(() => {
     const filter = (records: RecordValue[]) => selectedOrg === "all" ? records : records.filter((record) => recordOrgId(record) === selectedOrg);
@@ -98,7 +107,7 @@ export function DashboardPage() {
   const engineStatus = String(data.health?.status || (data.health?.runtime as RecordValue | undefined)?.status || "Unavailable");
   const scopeLabel = selectedOrg === "all" ? "All Organizations" : orgName(currentOrg!);
   const metrics = [
-    { label: "Organizations", value: selectedOrg === "all" ? data.organizations.length : currentOrg ? 1 : 0, detail: selectedOrg === "all" ? `${activeOrganizations} active` : currentOrg?.status || "Unknown", icon: Building2 },
+    ...(isSuperAdmin ? [{ label: "Organizations", value: selectedOrg === "all" ? data.organizations.length : currentOrg ? 1 : 0, detail: selectedOrg === "all" ? `${activeOrganizations} active` : currentOrg?.status || "Unknown", icon: Building2 }] : []),
     { label: "Users", value: scoped.users.length, detail: errors.includes("/admin/users") ? "API unavailable" : "Real directory records", icon: Users },
     { label: "Threats", value: scoped.threats.length, detail: errors.includes("/threats") ? "API unavailable" : "Current records", icon: ShieldAlert },
     { label: "Incidents", value: scoped.incidents.length, detail: errors.includes("/incidents") ? "API unavailable" : "Current records", icon: Siren },
@@ -112,9 +121,9 @@ export function DashboardPage() {
   ];
   const operationCards = [
     { label: "Notifications", path: "/my-notifications", icon: BellRing, kind: "notifications", detail: "Unread requiring attention" },
-    { label: "Audit activity", path: "/admin/audit-activity?page=1&page_size=100", icon: Activity, kind: "audit", detail: "Recent security timeline" },
-    { label: "File monitoring", path: "/file-events?page=1&page_size=100", icon: FileSearch, kind: "files", detail: "Monitored file events" },
-    { label: "Pre-encryption", path: "/pre-encryption-detections", icon: ScanSearch, kind: "preEncryption", detail: "Early ransomware detections" },
+    ...(can("AUDIT_LOG_VIEW", "AUDIT_LOG_VIEW_SENSITIVE") ? [{ label: "Audit activity", path: "/admin/audit-activity?page=1&page_size=100", icon: Activity, kind: "audit", detail: "Recent security timeline" }] : []),
+    ...(can("HONEYTOKEN_VIEW", "CANARY_FILE_VIEW", "CANARY_FILE_VIEW_EVENTS") ? [{ label: "File monitoring", path: "/file-events?page=1&page_size=100", icon: FileSearch, kind: "files", detail: "Monitored file events" }] : []),
+    { label: "Pre-encryption", path: "/module/pre-encryption/dashboard", icon: ScanSearch, kind: "preEncryption", detail: "Early ransomware detections" },
     { label: "AI risk scores", path: "/ai-risk/scores", icon: BrainCircuit, kind: "aiRisk", detail: "AI-scored security risk" },
     { label: "Deception fingerprints", path: "/adaptive-deception/fingerprints", icon: Fingerprint, kind: "fingerprints", detail: "Attacker fingerprints" },
     { label: "Forensic jobs", path: "/deepfake-forensics/analysis-jobs", icon: Bot, kind: "forensicJobs", detail: "Queued or active analyses" },
@@ -124,13 +133,13 @@ export function DashboardPage() {
     { label: "Offline sync", path: "/offline-sync/queue", icon: RefreshCw, kind: "sync", detail: "Pending synchronization" },
     { label: "Investigation cases", path: "/investigation-cases", icon: DatabaseZap, kind: "cases", detail: "Organization case load" },
     { label: "Intelligence", path: "/intelligence/dashboard", icon: Network, kind: "intelligence", detail: "Active correlated findings" },
-  ];
+  ].filter((card) => isSuperAdmin || !["preEncryption", "aiRisk", "fingerprints", "forensicJobs", "reports", "model", "sync", "cases", "intelligence"].includes(card.kind) || [...grantedPermissions].some((permission) => permission.startsWith(card.kind === "forensicJobs" ? "AI_ANALYSIS_" : card.kind === "reports" ? "REPORT_" : card.kind === "model" ? "AI_MODEL_" : card.kind === "sync" ? "SYNC_" : card.kind === "cases" ? "INVESTIGATION_" : card.kind === "intelligence" ? "INTELLIGENCE_" : card.kind === "preEncryption" ? "PRE_ENCRYPTION_" : card.kind === "aiRisk" ? "AI_RISK_" : "ADAPTIVE_DECEPTION_")));
 
   return <div className="page command-dashboard">
     <DashboardLiveBackground />
-    <section className="dashboard-hero"><div><span className="eyebrow">Super Administrator</span><h1>{selectedOrg === "all" ? "Global Security Overview" : "Organization Security Overview"}</h1><p>Live operational records for {scopeLabel}.</p></div><div className="scope-controls"><label><span>Organization scope</span><select value={selectedOrg} onChange={(event) => setSelectedOrg(event.target.value)}><option value="all">All Organizations</option>{data.organizations.map((org) => <option key={org.id} value={org.id}>{orgName(org)}</option>)}</select></label><button type="button" onClick={() => void load(true)} disabled={refreshing}><RefreshCw size={16} className={refreshing ? "spin" : ""} /> {refreshing ? "Refreshing…" : "Refresh"}</button>{lastRefreshedAt && <small className="refresh-stamp" aria-live="polite">Updated {lastRefreshedAt.toLocaleTimeString()}</small>}</div></section>
+    <section className="dashboard-hero"><div><span className="eyebrow">{isSuperAdmin ? "Super Administrator" : "Organization Administrator"}</span><h1>{isSuperAdmin && selectedOrg === "all" ? "Global Security Overview" : "Organization Security Overview"}</h1><p>Live operational records for {scopeLabel}.</p></div><div className="scope-controls"><label><span>Organization scope</span><select value={selectedOrg} onChange={(event) => setSelectedOrg(event.target.value)} disabled={!isSuperAdmin}>{isSuperAdmin && <option value="all">All Organizations</option>}{data.organizations.map((org) => <option key={org.id} value={org.id}>{orgName(org)}</option>)}</select></label><button type="button" onClick={() => void load(true)} disabled={refreshing}><RefreshCw size={16} className={refreshing ? "spin" : ""} /> {refreshing ? "Refreshing…" : "Refresh"}</button>{lastRefreshedAt && <small className="refresh-stamp" aria-live="polite">Updated {lastRefreshedAt.toLocaleTimeString()}</small>}</div></section>
 
-    {errors.length > 0 && <div className="dashboard-notice">Some services did not respond: {errors.join(", ")}. Their cards show honest unavailable or zero states.</div>}
+    {errors.length > 0 && <div className="dashboard-notice">Some platform services are unavailable for this tenant or are not enabled: {errors.join(", ")}. These cards remain honest and do not show fabricated data.</div>}
     <section className="metric-grid" aria-label="Security summary">{metrics.map(({ label, value, detail, icon: Icon }) => <article className="metric-card" key={label}><span className="metric-icon"><Icon size={21} /></span><div><p>{label}</p><strong>{loading ? "—" : value}</strong><small>{detail}</small></div></article>)}</section>
     <LiveRecordOverview sources={overviewSources} users={scoped.users.length} loading={loading} scopeLabel={scopeLabel} />
     <section className="operations-overview" aria-label="Connected platform modules"><div className="operations-heading"><div><span className="eyebrow">Connected platform modules</span><h2>Security operations overview</h2><p>Live backend summaries across detection, forensics, response, and platform health.</p></div><span>{operationCards.filter((card) => !errors.includes(card.path)).length}/{operationCards.length} live sources</span></div><div className="operations-grid">{operationCards.map(({ label, path, icon: Icon, kind, detail }) => { const unavailable = errors.includes(path); const summary = operationSummary(kind, data.operations[path]); return <article className={unavailable ? "unavailable" : ""} key={path}><span className="operation-icon"><Icon size={18}/></span><div><span>{label}</span><strong>{loading ? "—" : unavailable ? "Unavailable" : summary.value}</strong><small>{unavailable ? "Endpoint did not respond or access was denied" : summary.meta || detail}</small></div></article>; })}</div></section>

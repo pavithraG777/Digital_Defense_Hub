@@ -182,6 +182,21 @@ func (s *EncryptionKeyService) GetActiveEncryptionKey(
 	return buildGetEncryptionKeyResponse(key), nil
 }
 
+func (s *EncryptionKeyService) ListEncryptionKeys(ctx context.Context, organizationID uuid.UUID) ([]*GetEncryptionKeyResponse, error) {
+	if err := s.validate(); err != nil {
+		return nil, err
+	}
+	keys, err := s.repository.ListEncryptionKeys(ctx, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]*GetEncryptionKeyResponse, 0, len(keys))
+	for index := range keys {
+		items = append(items, buildGetEncryptionKeyResponse(&keys[index]))
+	}
+	return items, nil
+}
+
 // ResolveActiveEncryptionKey decrypts the organization's active key for
 // internal file-protection use. Callers must clear the returned byte slice
 // immediately after constructing the required encryption operation.

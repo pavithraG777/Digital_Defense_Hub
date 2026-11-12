@@ -36,7 +36,8 @@ type MediaEngineRequest struct {
 
 	ExecutionDevice string `json:"execution_device"`
 
-	Model *MediaEngineModelSpecification `json:"model,omitempty"`
+	Model  *MediaEngineModelSpecification  `json:"model,omitempty"`
+	Models []MediaEngineModelSpecification `json:"models,omitempty"`
 
 	Parameters map[string]any `json:"parameters"`
 

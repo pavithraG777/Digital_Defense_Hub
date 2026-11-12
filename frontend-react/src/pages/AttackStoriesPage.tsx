@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, Clock3, GitBranch, Pause, Play, RefreshCw, Search, ShieldAlert, Target } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, Clock3, FileWarning, Pause, Play, RefreshCw, Search, ShieldAlert, Target, Volume2 } from "lucide-react";
 import { api } from "../lib/api";
 import {
   EmptyState,
@@ -83,6 +83,30 @@ function eventTechnique(event: UnknownMap) {
   return eventString(event, ["mitre_technique", "technique"]);
 }
 
+function nestedEventValue(event: UnknownMap, keys: string[]) {
+  const direct = eventString(event, keys);
+  if (direct) return direct;
+  const metadata = isMap(event.metadata) ? event.metadata : null;
+  return metadata ? eventString(metadata, keys) : "";
+}
+
+function eventFileIdentity(event: UnknownMap) {
+  return nestedEventValue(event, ["canary_file_id", "protected_file_id", "file_id", "file_path", "file_name"]);
+}
+
+function eventFileLabel(event: UnknownMap) {
+  return nestedEventValue(event, ["file_name", "original_file_name", "file_path", "canary_file_id"]) || "Unidentified security resource";
+}
+
+function eventNarration(event: UnknownMap, index: number, total: number) {
+  const file = eventFileLabel(event);
+  const title = humanize(eventTitle(event));
+  const severity = humanize(eventSeverity(event));
+  const description = eventDescription(event);
+  const technique = eventTechnique(event);
+  return `Event ${index + 1} of ${total}. ${title}, on ${file}. Severity ${severity}. ${description}${technique ? ` MITRE technique ${technique}.` : ""}`;
+}
+
 function severityRank(value: string) {
   const rank = severityOrder.indexOf(value.toUpperCase());
   return rank < 0 ? severityOrder.length : rank;
@@ -92,16 +116,19 @@ function groupStories(rows: StoryTimelineRow[]): StoryGroup[] {
   const grouped = new Map<string, StoryGroup>();
   for (const row of rows) {
     if (!row || !row.story_id || !isMap(row.event)) continue;
-    const current = grouped.get(row.story_id) || {
-      id: row.story_id,
-      title: row.story_title || "Untitled attack story",
+    const fileIdentity = eventFileIdentity(row.event);
+    const groupID = fileIdentity ? `file:${fileIdentity.toLowerCase()}` : `story:${row.story_id}`;
+    const current = grouped.get(groupID) || {
+      id: groupID,
+      title: fileIdentity ? `${eventFileLabel(row.event)} · Access story` : row.story_title || "Untitled attack story",
       events: [],
       highestSeverity: "UNKNOWN",
     };
-    current.events.push(row.event);
+    const fingerprint = eventString(row.event, ["event_id", "id", "event_code"]) || `${eventTimestamp(row.event)}:${eventTitle(row.event)}`;
+    if (!current.events.some((event) => (eventString(event, ["event_id", "id", "event_code"]) || `${eventTimestamp(event)}:${eventTitle(event)}`) === fingerprint)) current.events.push(row.event);
     const severity = eventSeverity(row.event);
     if (severityRank(severity) < severityRank(current.highestSeverity)) current.highestSeverity = severity;
-    grouped.set(row.story_id, current);
+    grouped.set(groupID, current);
   }
 
   return [...grouped.values()]
@@ -141,6 +168,7 @@ export function AttackStoriesPage() {
   const [eventIndex, setEventIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
+  const narrationRef = useRef<SpeechSynthesisUtterance | null>(null);
 
   const load = useCallback(async (refresh = false) => {
     refresh ? setRefreshing(true) : setLoading(true);
@@ -197,18 +225,28 @@ export function AttackStoriesPage() {
   const selectedEvent = selectedStory?.events[eventIndex] || null;
 
   useEffect(() => {
-    if (!playing || !selectedStory) return;
-    const timer = window.setInterval(() => {
-      setEventIndex((current) => {
-        if (current >= selectedStory.events.length - 1) {
-          setPlaying(false);
-          return current;
-        }
-        return current + 1;
-      });
-    }, 1800 / speed);
-    return () => window.clearInterval(timer);
-  }, [playing, selectedStory, speed]);
+    if (!playing || !selectedStory || !selectedEvent) return;
+    let active = true;
+    const advance = () => {
+      if (!active) return;
+      if (eventIndex >= selectedStory.events.length - 1) setPlaying(false);
+      else setEventIndex((current) => current + 1);
+    };
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(eventNarration(selectedEvent, eventIndex, selectedStory.events.length));
+    const voices = window.speechSynthesis.getVoices();
+    utterance.voice = voices.find((voice) => voice.lang.toLowerCase() === "en-in") || voices.find((voice) => voice.lang.toLowerCase().startsWith("en")) || null;
+    utterance.rate = speed === 4 ? 1.55 : speed === 2 ? 1.25 : 1;
+    utterance.pitch = .92;
+    utterance.volume = 1;
+    utterance.onend = advance;
+    utterance.onerror = advance;
+    narrationRef.current = utterance;
+    window.speechSynthesis.speak(utterance);
+    return () => { active = false; if (narrationRef.current === utterance) window.speechSynthesis.cancel(); };
+  }, [eventIndex, playing, selectedEvent, selectedStory, speed]);
+
+  useEffect(() => () => window.speechSynthesis?.cancel(), []);
 
   const severityCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -235,9 +273,20 @@ export function AttackStoriesPage() {
   const techniqueOptions = [...new Set(mitre.map((item) => item.technique).filter(Boolean))].sort();
 
   function selectStory(story: StoryGroup) {
+    window.speechSynthesis?.cancel();
     setSelectedStoryID(story.id);
     setEventIndex(0);
     setPlaying(false);
+  }
+
+  function toggleReplay() {
+    if (playing) {
+      window.speechSynthesis?.cancel();
+      setPlaying(false);
+      return;
+    }
+    if (selectedStory && eventIndex >= selectedStory.events.length - 1) setEventIndex(0);
+    setPlaying(true);
   }
 
   return (
@@ -257,7 +306,7 @@ export function AttackStoriesPage() {
       {loading ? <LoadingState label="Loading attack-story timeline…" /> : null}
       {!loading && !error ? <>
         <div className="soc-metrics">
-          <MetricCard label="Stories" value={summary?.story_count ?? stories.length} hint="Backend attack-story records" accent="blue" />
+          <MetricCard label="File stories" value={stories.length} hint="Events grouped by the same file / Canary" accent="blue" />
           <MetricCard label="Timeline events" value={summary?.event_count ?? rows.length} hint="Recorded correlated events" accent="violet" />
           <MetricCard label="High / critical" value={summary?.high_or_critical_events ?? 0} hint="Backend severity count" accent="red" />
           <MetricCard label="MITRE techniques" value={mitre.length} hint="Techniques present in story data" accent="amber" />
@@ -267,10 +316,10 @@ export function AttackStoriesPage() {
         {!stories.length ? <EmptyState title="No attack stories recorded" message="The backend returned no attack-story timeline events for this organization." /> : <>
           <div className="soc-story-overview">
             <section className="soc-panel soc-story-list-panel">
-              <header><div><p>CASE NARRATIVES</p><h2>Recorded stories</h2></div><span>{filteredStories.length} visible</span></header>
+              <header><div><p>FILE-CORRELATED NARRATIVES</p><h2>Recorded file stories</h2></div><span>{filteredStories.length} visible</span></header>
               <div className="soc-story-list">
                 {filteredStories.map((story) => <button key={story.id} type="button" className={story.id === selectedStoryID ? "active" : ""} onClick={() => selectStory(story)}>
-                  <span className="soc-story-icon"><GitBranch size={18} /></span>
+                  <span className="soc-story-icon"><FileWarning size={18} /></span>
                   <span><strong>{story.title}</strong><small>{story.events.length} event{story.events.length === 1 ? "" : "s"} · Last {formatDate(story.lastAt)}</small></span>
                   <StatusBadge value={story.highestSeverity} />
                 </button>)}
@@ -282,14 +331,15 @@ export function AttackStoriesPage() {
               {selectedStory && selectedEvent ? <>
                 <header><div><p>EVENT REPLAY</p><h2>{selectedStory.title}</h2></div><StatusBadge value={eventSeverity(selectedEvent)} /></header>
                 <div className="soc-replay-controls">
-                  <button type="button" className="icon-button" aria-label="Previous event" disabled={eventIndex === 0} onClick={() => { setPlaying(false); setEventIndex((current) => Math.max(0, current - 1)); }}><ChevronLeft size={18} /></button>
-                  <button type="button" className="primary soc-play" onClick={() => setPlaying((current) => !current)}>{playing ? <Pause size={17} /> : <Play size={17} />} {playing ? "Pause" : "Replay"}</button>
-                  <button type="button" className="icon-button" aria-label="Next event" disabled={eventIndex >= selectedStory.events.length - 1} onClick={() => { setPlaying(false); setEventIndex((current) => Math.min(selectedStory.events.length - 1, current + 1)); }}><ChevronRight size={18} /></button>
+                  <button type="button" className="icon-button" aria-label="Previous event" disabled={eventIndex === 0} onClick={() => { window.speechSynthesis?.cancel(); setPlaying(false); setEventIndex((current) => Math.max(0, current - 1)); }}><ChevronLeft size={18} /></button>
+                  <button type="button" className="primary soc-play" onClick={toggleReplay}>{playing ? <Pause size={17} /> : <Play size={17} />} {playing ? "Pause voice" : "AI voice replay"}</button>
+                  <button type="button" className="icon-button" aria-label="Next event" disabled={eventIndex >= selectedStory.events.length - 1} onClick={() => { window.speechSynthesis?.cancel(); setPlaying(false); setEventIndex((current) => Math.min(selectedStory.events.length - 1, current + 1)); }}><ChevronRight size={18} /></button>
                   <label>Speed<select value={speed} onChange={(event) => setSpeed(Number(event.target.value))}><option value={1}>1×</option><option value={2}>2×</option><option value={4}>4×</option></select></label>
                   <span>Event {eventIndex + 1} of {selectedStory.events.length}</span>
                 </div>
+                <div className={`soc-narration-status${playing ? " speaking" : ""}`}><Volume2 size={16}/><span>{playing ? `Narrating event ${eventIndex + 1}; the next event starts after narration finishes` : "Voice narration ready"}</span></div>
                 <div className="soc-replay-track" aria-label="Attack story event timeline">
-                  {selectedStory.events.map((event, index) => <button key={`${eventTimestamp(event)}-${index}`} type="button" className={index === eventIndex ? "active" : index < eventIndex ? "complete" : ""} onClick={() => { setPlaying(false); setEventIndex(index); }} title={eventTitle(event)}><i /><span>{index + 1}</span></button>)}
+                  {selectedStory.events.map((event, index) => <button key={`${eventTimestamp(event)}-${index}`} type="button" className={index === eventIndex ? "active" : index < eventIndex ? "complete" : ""} onClick={() => { window.speechSynthesis?.cancel(); setPlaying(false); setEventIndex(index); }} title={eventTitle(event)}><i /><span>{index + 1}</span><small>{humanize(eventTitle(event))}</small></button>)}
                 </div>
                 <article className="soc-current-event">
                   <div className="soc-current-event-heading"><span><Clock3 size={17} /> {formatDate(eventTimestamp(selectedEvent))}</span>{eventTechnique(selectedEvent) ? <span><Target size={17} /> {eventTechnique(selectedEvent)}</span> : null}</div>

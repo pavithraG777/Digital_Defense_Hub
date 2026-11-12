@@ -49,6 +49,11 @@ func getUUIDFromContext(
 }
 
 func (h *Handler) AssignRoles(c *gin.Context) {
+	organizationID, ok := getUUIDFromContext(c, "organization_id")
+	if !ok {
+		response.Unauthorized(c, "Organization information is missing", nil)
+		return
+	}
 
 	userID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -82,6 +87,7 @@ func (h *Handler) AssignRoles(c *gin.Context) {
 
 	result, err := h.service.AssignRoles(
 		c.Request.Context(),
+		organizationID,
 		userID,
 		grantedBy,
 		req,
@@ -123,7 +129,35 @@ func (h *Handler) AssignRoles(c *gin.Context) {
 	)
 }
 
+func (h *Handler) BulkAssignRoles(c *gin.Context) {
+	organizationID, ok := getUUIDFromContext(c, "organization_id")
+	if !ok {
+		response.Unauthorized(c, "Organization information is missing", nil)
+		return
+	}
+	var req BulkAssignRolesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request payload", err.Error())
+		return
+	}
+	var grantedBy *uuid.UUID
+	if id, ok := getUUIDFromContext(c, "user_id"); ok {
+		grantedBy = &id
+	}
+	result, err := h.service.BulkAssignRoles(c.Request.Context(), organizationID, grantedBy, req)
+	if err != nil {
+		response.BadRequest(c, "Failed to assign roles", err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, "Bulk role assignment completed", result)
+}
+
 func (h *Handler) ListUserRoles(c *gin.Context) {
+	organizationID, ok := getUUIDFromContext(c, "organization_id")
+	if !ok {
+		response.Unauthorized(c, "Organization information is missing", nil)
+		return
+	}
 
 	userID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -137,6 +171,7 @@ func (h *Handler) ListUserRoles(c *gin.Context) {
 
 	result, err := h.service.ListUserRoles(
 		c.Request.Context(),
+		organizationID,
 		userID,
 	)
 	if err != nil {
@@ -170,6 +205,11 @@ func (h *Handler) ListUserRoles(c *gin.Context) {
 }
 
 func (h *Handler) RemoveRole(c *gin.Context) {
+	organizationID, ok := getUUIDFromContext(c, "organization_id")
+	if !ok {
+		response.Unauthorized(c, "Organization information is missing", nil)
+		return
+	}
 
 	userID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -203,6 +243,7 @@ func (h *Handler) RemoveRole(c *gin.Context) {
 
 	err = h.service.RemoveRole(
 		c.Request.Context(),
+		organizationID,
 		userID,
 		req.RoleID,
 	)
@@ -224,6 +265,11 @@ func (h *Handler) RemoveRole(c *gin.Context) {
 }
 
 func (h *Handler) ReplaceRoles(c *gin.Context) {
+	organizationID, organizationOK := getUUIDFromContext(c, "organization_id")
+	if !organizationOK {
+		response.Unauthorized(c, "Organization information is missing", nil)
+		return
+	}
 
 	userID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -284,6 +330,7 @@ func (h *Handler) ReplaceRoles(c *gin.Context) {
 
 	result, err := h.service.ReplaceRoles(
 		c.Request.Context(),
+		organizationID,
 		userID,
 		&grantedBy,
 		req,

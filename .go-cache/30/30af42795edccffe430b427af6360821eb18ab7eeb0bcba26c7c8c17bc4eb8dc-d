@@ -1,0 +1,13 @@
+./auth.go
+./authorization.go
+./cors.go
+./errors.go
+./organization_type.go
+./password_change.go
+./permission.go
+./request_id.go
+./security_headers.go
+./session.go
+./password_change_test.go
+./permission_test.go
+./security_headers_test.go

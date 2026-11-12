@@ -1,0 +1,3 @@
+./module.go
+./worker.go
+./module_test.go

@@ -34,6 +34,10 @@ type ProtectedFileService interface {
 	RestoreProtectedFile(ctx context.Context, protectedFileID uuid.UUID, organizationID uuid.UUID, req *RestoreProtectedFileRequest) (*RestoreProtectedFileResponse, error)
 }
 
+type protectedFileListService interface {
+	ListProtectedFiles(ctx context.Context, organizationID uuid.UUID) ([]ProtectedFile, error)
+}
+
 type Handler struct {
 	service        ProtectedFileService
 	authRepository auth.MFAChallengeRepository
@@ -253,6 +257,35 @@ func (h *Handler) GetProtectedFile(
 		"Protected file retrieved successfully",
 		buildGetProtectedFileResponse(file),
 	)
+}
+
+// ListProtectedFiles returns safe metadata for the authenticated organization.
+func (h *Handler) ListProtectedFiles(c *gin.Context) {
+	if !h.isAvailable() {
+		response.InternalServerError(c, "Protected file handler is unavailable", nil)
+		return
+	}
+	organizationID, ok := protectedFileUUIDFromContext(c, "organization_id")
+	if !ok {
+		response.Unauthorized(c, "Organization information is missing", nil)
+		return
+	}
+	listService, ok := h.service.(protectedFileListService)
+	if !ok {
+		response.InternalServerError(c, "Protected file listing is unavailable", nil)
+		return
+	}
+	files, err := listService.ListProtectedFiles(c.Request.Context(), organizationID)
+	if err != nil {
+		_ = c.Error(err)
+		response.InternalServerError(c, "Failed to list protected files", nil)
+		return
+	}
+	items := make([]*GetProtectedFileResponse, 0, len(files))
+	for index := range files {
+		items = append(items, buildGetProtectedFileResponse(&files[index]))
+	}
+	response.OK(c, "Protected files retrieved successfully", items)
 }
 
 // StartOwnerProtectedFileRestore sends an email OTP challenge to the

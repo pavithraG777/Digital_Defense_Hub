@@ -3,6 +3,7 @@ package honeytoken
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -328,6 +329,8 @@ func (h *CanaryHandler) ListCanaryFiles(
 	canaryFiles, err := h.service.ListCanaryFiles(
 		c.Request.Context(),
 		organizationID,
+		requestIncludesPlatformOwnedData(c),
+		requestIncludesTenantAdminOwnedData(c),
 		request,
 	)
 	if err != nil {
@@ -437,6 +440,54 @@ func (h *CanaryHandler) DeactivateCanaryFile(c *gin.Context) {
 		return
 	}
 	response.OK(c, "Canary file deactivated successfully", result)
+}
+
+// LaunchDeployedCanary is intentionally local-only because it starts a
+// desktop application on the machine hosting the DDH backend.
+func (h *CanaryHandler) LaunchDeployedCanary(c *gin.Context) {
+	if !h.isAvailable() {
+		response.InternalServerError(c, "Canary file handler is unavailable", nil)
+		return
+	}
+	clientIP := net.ParseIP(strings.TrimSpace(c.ClientIP()))
+	if clientIP == nil || !clientIP.IsLoopback() {
+		response.Error(c, http.StatusForbidden, "Local Canary launch is available only from this computer", nil)
+		return
+	}
+	organizationID, ok := canaryUUIDFromContext(c, "organization_id")
+	if !ok {
+		response.Unauthorized(c, "Organization information is missing", nil)
+		return
+	}
+	var request LaunchCanaryFileRequest
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&request); err != nil {
+			response.BadRequest(c, "Invalid local Canary action", err.Error())
+			return
+		}
+	}
+	newFileName := ""
+	if request.NewFileName != nil {
+		newFileName = *request.NewFileName
+	}
+	result, err := h.service.LaunchDeployedCanary(c.Request.Context(), organizationID, strings.TrimSpace(c.Param("id")), c.Param("action"), newFileName)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrCanaryFileNotFound):
+			response.NotFound(c, "Canary file not found", nil)
+		case errors.Is(err, ErrCanaryFileNotDeployable), errors.Is(err, ErrCanaryLocalLaunchUnavailable):
+			response.Error(c, http.StatusConflict, "The deployed Canary copy is unavailable on this computer", nil)
+		case errors.Is(err, ErrCanaryDeploymentFileExists):
+			response.Error(c, http.StatusConflict, "A file with that name already exists", nil)
+		case errors.Is(err, ErrCanaryDeploymentOutsideRoot):
+			response.Error(c, http.StatusForbidden, "Canary path is outside managed storage", nil)
+		default:
+			_ = c.Error(err)
+			response.InternalServerError(c, "Unable to launch the deployed Canary copy", nil)
+		}
+		return
+	}
+	response.OK(c, "Deployed Canary launched locally", result)
 }
 
 func (h *CanaryHandler) isAvailable() bool {

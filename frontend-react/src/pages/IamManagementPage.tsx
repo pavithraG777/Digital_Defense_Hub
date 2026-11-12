@@ -49,20 +49,38 @@ export function IamManagementPage({ initialTab = "users" }: { initialTab?: Modul
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
-    try {
-      const [current, roleResponse, permissionResponse] = await Promise.all([
-        api.get(config.endpoint),
-        api.get("/admin/roles"),
-        loadAllActivePermissions(),
-      ]);
-      setRows(kind === "permissions" ? permissionResponse : recordsOf(current));
-      setRoles(recordsOf(roleResponse));
-      setPermissions(permissionResponse);
-    } catch (cause: any) {
-      setError(cause?.message || `Unable to load ${config.title.toLowerCase()}.`);
-    } finally {
-      setLoading(false);
+    const requests = [
+      kind === "permissions" ? Promise.resolve(null) : api.get(config.endpoint),
+      api.get("/admin/roles"),
+      loadAllActivePermissions(),
+    ] as const;
+    const [currentResult, roleResult, permissionResult] = await Promise.allSettled(requests);
+    const errors: string[] = [];
+
+    if (permissionResult.status === "fulfilled") {
+      setPermissions(permissionResult.value);
+      setRows(kind === "permissions" ? permissionResult.value : []);
+    } else {
+      errors.push(permissionResult.reason?.message || "Unable to load permissions.");
     }
+
+    if (roleResult.status === "fulfilled") {
+      setRoles(recordsOf(roleResult.value));
+      if (kind === "roles") setRows(recordsOf(roleResult.value));
+    } else {
+      errors.push(roleResult.reason?.message || "Unable to load roles.");
+    }
+
+    if (kind !== "permissions") {
+      if (currentResult.status === "fulfilled") {
+        setRows(recordsOf(currentResult.value));
+      } else {
+        errors.push(currentResult.reason?.message || `Unable to load ${config.title.toLowerCase()}.`);
+      }
+    }
+
+    setError(errors.length ? errors.join(" ") : "");
+    setLoading(false);
   }, [config.endpoint, config.title]);
 
   useEffect(() => { void load(); }, [load]);
@@ -217,7 +235,28 @@ function SelectField({ label, value, onChange, children, required = false }: any
 
 function UserFields({ form, set, roles, editing }: any) { const [showPassword, setShowPassword] = useState(false); return <><Field label="Username" value={form.username} onChange={(v: string) => set("username", v)} required /><Field label="Official email" type="email" value={form.official_email} onChange={(v: string) => set("official_email", v)} required /><Field label="First name" value={form.first_name} onChange={(v: string) => set("first_name", v)} required /><Field label="Last name" value={form.last_name} onChange={(v: string) => set("last_name", v)} /><Field label="Display name" value={form.display_name} onChange={(v: string) => set("display_name", v)} /><Field label="Employee code" value={form.employee_code} onChange={(v: string) => set("employee_code", v.toUpperCase())} placeholder="ACME-BANK-ADMIN-001" help="Use uppercase letters, numbers, and hyphens. Keep it unique within the organization." /><Field label="Designation" value={form.designation} onChange={(v: string) => set("designation", v)} /><Field label="Official phone" value={form.official_phone} onChange={(v: string) => set("official_phone", v)} />{!editing && <><Field label="Temporary password" type={showPassword ? "text" : "password"} value={form.password} onChange={(v: string) => set("password", v)} required /><Field label="Confirm password" type={showPassword ? "text" : "password"} value={form.confirm_password} onChange={(v: string) => set("confirm_password", v)} required /><label><span>Password visibility</span><button type="button" className="secondary-button" onClick={() => setShowPassword((current) => !current)}>{showPassword ? "Hide password" : "Show password"}</button></label><SelectField label="Initial access role" value={form.role_id} onChange={(v: string) => set("role_id", v)} required><option value="">Select a role</option>{roles.filter((role: any) => role.status === "ACTIVE").map((role: any) => <option key={role.id} value={role.id}>{role.role_name || role.name}</option>)}</SelectField></>}<SelectField label="User type" value={form.user_type} onChange={(v: string) => set("user_type", v)}><option>INTERNAL</option><option>EXTERNAL</option><option>SERVICE</option></SelectField></>; }
 function roleCode(name: string) { return name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, ""); }
-function RoleFields({ form, set, permissions, togglePermission }: any) { const [module, setModule] = useState("ALL"); const currentName = form.role_name || form.name || ""; const updateName = (value: string) => { if (!form.role_code || form.role_code === roleCode(currentName)) set("role_code", roleCode(value)); set("role_name", value); }; const modules: string[] = [...new Set<string>(permissions.map((permission: any) => String(permission.module_name || "OTHER")))].sort(); const visible = permissions.filter((permission: any) => module === "ALL" || permission.module_name === module); const selected = (form.permission_ids || []).length; return <><Field label="Role name" value={currentName} onChange={updateName} required /><Field label="Role code" value={form.role_code} placeholder="Auto-generated, e.g. BANK_ADMIN" help="Uppercase letters, numbers, and underscores only. It must be unique in this organization." onChange={(v: string) => set("role_code", roleCode(v))} required /><Field label="Description" value={form.description} onChange={(v: string) => set("description", v)} /><Field label="Priority" type="number" value={form.priority_level ?? form.priority} onChange={(v: string) => set("priority_level", Number(v))} /><SelectField label="Scope" value={form.role_scope || form.scope} onChange={(v: string) => set("role_scope", v)}><option>ORGANIZATION</option><option>GLOBAL</option><option>DEPARTMENT</option></SelectField><SelectField label="Status" value={form.status} onChange={(v: string) => set("status", v)}><option>ACTIVE</option><option>INACTIVE</option></SelectField><fieldset className="iam-permission-picker"><legend>Permissions selected: {selected}</legend><SelectField label="Permission module" value={module} onChange={setModule}><option value="ALL">All modules ({permissions.length})</option>{modules.map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")} ({permissions.filter((permission: any) => permission.module_name === value).length})</option>)}</SelectField>{visible.length ? visible.map((permission: any) => { const available = String(permission.status || "ACTIVE").toUpperCase() === "ACTIVE"; return <label key={permission.id} title={available ? "" : "Inactive permissions cannot be assigned"}><input type="checkbox" disabled={!available} checked={(form.permission_ids || []).includes(permission.id)} onChange={() => togglePermission(permission.id)} /><span><strong>{permission.permission_name || permission.name}{!available && " (inactive)"}</strong><small>{permission.action_name} · {permission.risk_level}</small></span></label>; }) : <p>No permissions are available for this module.</p>}</fieldset></>; }
+function RoleFields({ form, set, permissions, togglePermission }: any) {
+  const [module, setModule] = useState("ALL");
+  const [permissionSearch, setPermissionSearch] = useState("");
+  const currentName = form.role_name || form.name || "";
+  const updateName = (value: string) => { if (!form.role_code || form.role_code === roleCode(currentName)) set("role_code", roleCode(value)); set("role_name", value); };
+  const uniquePermissions = useMemo(() => {
+    const seen = new Set<string>();
+    return [...permissions].sort((a: any, b: any) => `${a.module_name}.${a.action_name}.${a.permission_name}`.localeCompare(`${b.module_name}.${b.action_name}.${b.permission_name}`)).filter((permission: any) => {
+      const key = `${String(permission.permission_code || "").toUpperCase()}|${String(permission.module_name || "").toUpperCase()}|${String(permission.action_name || "").toUpperCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key); return true;
+    });
+  }, [permissions]);
+  const modules: string[] = [...new Set<string>(uniquePermissions.map((permission: any) => String(permission.module_name || "OTHER")))].sort();
+  const visible = uniquePermissions.filter((permission: any) => (module === "ALL" || permission.module_name === module) && JSON.stringify(permission).toLowerCase().includes(permissionSearch.toLowerCase()));
+  const selectableIDs = visible.filter((permission: any) => String(permission.status || "ACTIVE").toUpperCase() === "ACTIVE").map((permission: any) => permission.id);
+  const selectedIDs: string[] = form.permission_ids || [];
+  const selected = selectedIDs.length;
+  const selectVisible = () => set("permission_ids", [...new Set([...selectedIDs, ...selectableIDs])]);
+  const clearVisible = () => set("permission_ids", selectedIDs.filter((id) => !selectableIDs.includes(id)));
+  return <><Field label="Role name" value={currentName} onChange={updateName} required /><Field label="Role code" value={form.role_code} placeholder="Auto-generated, e.g. BANK_ADMIN" help="Uppercase letters, numbers, and underscores only. It must be unique in this organization." onChange={(v: string) => set("role_code", roleCode(v))} required /><Field label="Description" value={form.description} onChange={(v: string) => set("description", v)} /><Field label="Priority" type="number" value={form.priority_level ?? form.priority} onChange={(v: string) => set("priority_level", Number(v))} /><SelectField label="Scope" value={form.role_scope || form.scope} onChange={(v: string) => set("role_scope", v)}><option>ORGANIZATION</option><option>DEPARTMENT</option></SelectField><SelectField label="Status" value={form.status} onChange={(v: string) => set("status", v)}><option>ACTIVE</option><option>INACTIVE</option></SelectField><fieldset className="iam-permission-picker"><legend>Access selected: {selected} of {uniquePermissions.length}</legend><p className="iam-permission-help">Grant an entire module in one click. Expand a module only when this role needs custom access.</p><div className="iam-permission-controls"><SelectField label="Module filter" value={module} onChange={setModule}><option value="ALL">All modules ({modules.length})</option>{modules.map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")} ({uniquePermissions.filter((permission: any) => permission.module_name === value).length})</option>)}</SelectField><Field label="Search access" value={permissionSearch} onChange={setPermissionSearch} placeholder="Module, permission or action" /><div className="iam-permission-bulk"><button type="button" className="secondary-button" onClick={selectVisible}>Grant shown</button><button type="button" className="secondary-button" onClick={clearVisible}>Remove shown</button></div></div><div className="iam-permission-modules">{modules.filter((name) => module === "ALL" || name === module).map((name) => { const rows = visible.filter((permission: any) => String(permission.module_name || "OTHER") === name); if (!rows.length) return null; const activeRows = rows.filter((permission: any) => String(permission.status || "ACTIVE").toUpperCase() === "ACTIVE"); const activeIDs = activeRows.map((permission: any) => permission.id); const selectedCount = activeIDs.filter((id: string) => selectedIDs.includes(id)).length; const allSelected = activeIDs.length > 0 && selectedCount === activeIDs.length; const toggleModule = () => set("permission_ids", allSelected ? selectedIDs.filter((id) => !activeIDs.includes(id)) : [...new Set([...selectedIDs, ...activeIDs])]); return <details className={`iam-permission-group${allSelected ? " module-granted" : ""}`} key={name}><summary><span><strong>{name.replaceAll("_", " ")}</strong><small>{selectedCount} of {activeIDs.length} granted</small></span><button type="button" className={allSelected ? "module-access-remove" : "module-access-grant"} onClick={(event) => { event.preventDefault(); toggleModule(); }}>{allSelected ? "Remove all" : "Grant all"}</button></summary><div className="iam-permission-items">{rows.map((permission: any) => { const available = String(permission.status || "ACTIVE").toUpperCase() === "ACTIVE"; return <label key={permission.id} title={available ? permission.permission_code : "Inactive permissions cannot be assigned"}><input type="checkbox" disabled={!available} checked={selectedIDs.includes(permission.id)} onChange={() => togglePermission(permission.id)} /><span><strong>{permission.permission_name || permission.name}{!available && " (inactive)"}</strong><small>{permission.action_name} · {permission.risk_level} · {permission.permission_code}</small></span></label>; })}</div></details>; })}</div>{visible.length === 0 && <p>No matching permissions are available.</p>}</fieldset></>;
+}
 function PermissionFields({ form, set }: any) { return <><Field label="Permission name" value={form.permission_name || form.name} onChange={(v: string) => set("permission_name", v)} required /><Field label="Permission code" value={form.permission_code} onChange={(v: string) => set("permission_code", v.toUpperCase())} required /><Field label="Module" value={form.module_name} onChange={(v: string) => set("module_name", v.toUpperCase())} required /><Field label="Action" value={form.action_name} onChange={(v: string) => set("action_name", v.toUpperCase())} required /><Field label="Description" value={form.description} onChange={(v: string) => set("description", v)} /><SelectField label="Risk level" value={form.risk_level} onChange={(v: string) => set("risk_level", v)}><option>LOW</option><option>MEDIUM</option><option>HIGH</option><option>CRITICAL</option></SelectField><SelectField label="Status" value={form.status} onChange={(v: string) => set("status", v)}><option>ACTIVE</option><option>INACTIVE</option></SelectField></>; }
 
 function userPayload(form: RecordItem, editing: boolean) { const payload: RecordItem = { official_email: form.official_email, employee_code: form.employee_code || null, first_name: form.first_name, last_name: form.last_name || null, display_name: form.display_name || null, designation: form.designation || null, official_phone: form.official_phone || null }; if (!editing) { payload.username = form.username; payload.password = form.password; payload.role_id = form.role_id; payload.user_type = form.user_type; } return payload; }

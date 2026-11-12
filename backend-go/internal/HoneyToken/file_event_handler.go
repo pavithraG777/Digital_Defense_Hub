@@ -96,6 +96,41 @@ func (h *FileEventHandler) CreateFileEvent(
 	)
 }
 
+// SimulateCanaryAccess creates a labelled, non-production event for an
+// authenticated operator demonstrating per-file unauthorized access.
+func (h *FileEventHandler) SimulateCanaryAccess(c *gin.Context) {
+	h.simulateCanaryEvent(c, "OPENED")
+}
+
+// SimulateCanaryEvent records one of the explicitly supported demonstration
+// operations without modifying, renaming, or deleting the real Canary file.
+func (h *FileEventHandler) SimulateCanaryEvent(c *gin.Context) {
+	h.simulateCanaryEvent(c, c.Param("event_type"))
+}
+
+func (h *FileEventHandler) simulateCanaryEvent(c *gin.Context, eventType string) {
+	if !h.isAvailable() {
+		response.InternalServerError(c, "File event handler is unavailable", nil)
+		return
+	}
+	organizationID, ok := fileEventUUIDFromContext(c, "organization_id")
+	if !ok {
+		response.Unauthorized(c, "Organization information is missing", nil)
+		return
+	}
+	userID, ok := fileEventUUIDFromContext(c, "user_id")
+	if !ok {
+		response.Unauthorized(c, "User information is missing", nil)
+		return
+	}
+	result, err := h.service.SimulateCanaryEvent(c.Request.Context(), organizationID, userID, strings.TrimSpace(c.Param("id")), eventType)
+	if err != nil {
+		handleCreateFileEventError(c, err)
+		return
+	}
+	response.Created(c, "Simulated unauthorized Canary access recorded", result)
+}
+
 func (h *FileEventHandler) GetFileEvent(
 	c *gin.Context,
 ) {
@@ -188,6 +223,8 @@ func (h *FileEventHandler) ListFileEvents(
 	events, err := h.service.ListFileEvents(
 		c.Request.Context(),
 		organizationID,
+		requestIncludesPlatformOwnedData(c),
+		requestIncludesTenantAdminOwnedData(c),
 		request,
 	)
 	if err != nil {

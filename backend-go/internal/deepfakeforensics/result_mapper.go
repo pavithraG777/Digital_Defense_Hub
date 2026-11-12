@@ -220,6 +220,13 @@ func mapDeepfakeResult(
 	if heuristic, ok := assessment.FeatureData["heuristic_probability"]; ok {
 		featureData["heuristic_probability"] = heuristic
 	}
+	// Keep compact per-model diagnostics so false positives can be audited.
+	if components, ok := assessment.FeatureData["ensemble_components"]; ok {
+		featureData["ensemble_components"] = components
+	}
+	if disagreement, ok := assessment.FeatureData["ensemble_disagreement"]; ok {
+		featureData["ensemble_disagreement"] = disagreement
+	}
 
 	regions, err := valuesToMaps(
 		assessment.SuspiciousRegions,

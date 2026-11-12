@@ -20,11 +20,12 @@ func TestRegisterCanaryRoutesIncludesSeparatedCRUDEndpoints(t *testing.T) {
 	)
 
 	expectedRoutes := map[string]bool{
-		http.MethodPost + " /api/v1/canary-files":            false,
-		http.MethodPost + " /api/v1/canary-files/import":     false,
-		http.MethodGet + " /api/v1/canary-files":             false,
-		http.MethodGet + " /api/v1/canary-files/:id":         false,
-		http.MethodPost + " /api/v1/canary-files/:id/deploy": false,
+		http.MethodPost + " /api/v1/canary-files":                   false,
+		http.MethodPost + " /api/v1/canary-files/import":            false,
+		http.MethodGet + " /api/v1/canary-files":                    false,
+		http.MethodGet + " /api/v1/canary-files/:id":                false,
+		http.MethodPost + " /api/v1/canary-files/:id/deploy":        false,
+		http.MethodPost + " /api/v1/canary-files/:id/local/:action": false,
 	}
 
 	for _, route := range engine.Routes() {

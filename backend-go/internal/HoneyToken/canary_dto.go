@@ -127,6 +127,18 @@ type DeployCanaryFileResponse struct {
 	DeployedAt               time.Time `json:"deployed_at"`
 }
 
+// LaunchCanaryFileResponse confirms a local desktop launch without exposing
+// the backend-managed physical path to the browser.
+type LaunchCanaryFileResponse struct {
+	ID       uuid.UUID `json:"id"`
+	FileName string    `json:"file_name"`
+	Action   string    `json:"action"`
+}
+
+type LaunchCanaryFileRequest struct {
+	NewFileName *string `json:"new_file_name" binding:"omitempty,min=1,max=255"`
+}
+
 // UpdateCanaryFileStatusRequest disarms a canary while preserving its
 // deployment and trigger history. Re-arming is an explicit deploy operation.
 type UpdateCanaryFileStatusRequest struct {

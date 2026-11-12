@@ -47,10 +47,10 @@ type AuditLogRepository interface {
 }
 
 type timelineRepository interface {
-	ListTimeline(ctx context.Context, organizationID uuid.UUID, filter TimelineFilter) (*TimelinePage, error)
+	ListTimeline(ctx context.Context, organizationID uuid.UUID, global bool, filter TimelineFilter) (*TimelinePage, error)
 }
 
-func (s *Service) ListTimeline(ctx context.Context, organizationID uuid.UUID, filter TimelineFilter) (*TimelinePage, error) {
+func (s *Service) ListTimeline(ctx context.Context, organizationID uuid.UUID, global bool, filter TimelineFilter) (*TimelinePage, error) {
 	if s == nil || s.repository == nil || organizationID == uuid.Nil {
 		return nil, fmt.Errorf("%w: audit timeline is unavailable", ErrAuditLogFailed)
 	}
@@ -61,7 +61,7 @@ func (s *Service) ListTimeline(ctx context.Context, organizationID uuid.UUID, fi
 	if !ok {
 		return nil, fmt.Errorf("%w: audit timeline is unavailable", ErrAuditLogFailed)
 	}
-	return repository.ListTimeline(ctx, organizationID, filter)
+	return repository.ListTimeline(ctx, organizationID, global, filter)
 }
 
 type Service struct {

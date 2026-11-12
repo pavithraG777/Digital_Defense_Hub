@@ -120,6 +120,15 @@ func RegisterRotationRoutes(
 		)
 
 	rotationGroup.GET(
+		"",
+		middleware.RequirePermission(
+			databasePool,
+			permissionViewAdaptiveDeception,
+		),
+		handler.ListRotations,
+	)
+
+	rotationGroup.GET(
 		"/:rotation_id",
 		middleware.RequirePermission(
 			databasePool,

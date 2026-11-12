@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -24,6 +26,7 @@ var (
 	ErrCanaryDeploymentOutsideRoot       = errors.New("canary deployment is outside configured root")
 	ErrCanaryDeploymentFileExists        = errors.New("canary deployment file already exists")
 	ErrCanaryIntegrityVerificationFailed = errors.New("canary file integrity verification failed")
+	ErrCanaryLocalLaunchUnavailable      = errors.New("local canary launch is unavailable")
 )
 
 type CanaryService struct {
@@ -375,6 +378,8 @@ func (s *CanaryService) GetCanaryFile(
 func (s *CanaryService) ListCanaryFiles(
 	ctx context.Context,
 	organizationID uuid.UUID,
+	includePlatformOwned bool,
+	includeTenantAdminOwned bool,
 	request ListCanaryFilesRequest,
 ) (*ListCanaryFilesResponse, error) {
 	if organizationID == uuid.Nil {
@@ -423,12 +428,14 @@ func (s *CanaryService) ListCanaryFiles(
 		s.repository.ListCanaryFiles(
 			ctx,
 			CanaryFileListFilter{
-				OrganizationID: organizationID,
-				DepartmentID:   departmentID,
-				CanaryType:     canaryType,
-				Status:         status,
-				Limit:          pageSize,
-				Offset:         (page - 1) * pageSize,
+				OrganizationID:          organizationID,
+				IncludePlatformOwned:    includePlatformOwned,
+				IncludeTenantAdminOwned: includeTenantAdminOwned,
+				DepartmentID:            departmentID,
+				CanaryType:              canaryType,
+				Status:                  status,
+				Limit:                   pageSize,
+				Offset:                  (page - 1) * pageSize,
 			},
 		)
 	if err != nil {
@@ -645,6 +652,85 @@ func (s *CanaryService) DeactivateCanaryFile(ctx context.Context, organizationID
 	}
 	response := buildGetCanaryFileResponse(canary)
 	return &response, nil
+}
+
+// LaunchDeployedCanary opens or reveals the exact deployed copy recorded by
+// the tenant-scoped database row. Imported sibling deployments can be outside
+// the default Canary root (for example, beside a document in OneDrive).
+func (s *CanaryService) LaunchDeployedCanary(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	canaryID string,
+	action string,
+	newFileName string,
+) (*LaunchCanaryFileResponse, error) {
+	if runtime.GOOS != "windows" {
+		return nil, ErrCanaryLocalLaunchUnavailable
+	}
+	parsedCanaryID, err := parseCanaryRequiredUUID(canaryID, "canary file ID")
+	if err != nil {
+		return nil, err
+	}
+	canary, err := s.repository.FindCanaryFileByID(ctx, organizationID, parsedCanaryID)
+	if err != nil {
+		return nil, err
+	}
+	if canary.DeployedAt == nil || strings.TrimSpace(canary.FilePath) == "" {
+		return nil, ErrCanaryFileNotDeployable
+	}
+	absolutePath, err := filepath.Abs(canary.FilePath)
+	if err != nil {
+		return nil, ErrCanaryLocalLaunchUnavailable
+	}
+	resolvedPath, err := filepath.EvalSymlinks(absolutePath)
+	if err != nil {
+		return nil, ErrCanaryLocalLaunchUnavailable
+	}
+	info, err := os.Stat(resolvedPath)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, ErrCanaryLocalLaunchUnavailable
+	}
+
+	action = strings.ToUpper(strings.TrimSpace(action))
+	var command *exec.Cmd
+	switch action {
+	case "OPEN":
+		// Do not bind a desktop launch to the HTTP request context: Gin cancels
+		// that context as soon as the response completes, which can terminate
+		// the launcher before Windows opens the associated application.
+		command = exec.Command("explorer.exe", resolvedPath)
+	case "REVEAL":
+		command = exec.Command("explorer.exe", "/select,"+resolvedPath)
+	case "RENAME":
+		newFileName = strings.TrimSpace(newFileName)
+		if newFileName == "" || filepath.Base(newFileName) != newFileName || newFileName == "." || newFileName == ".." {
+			return nil, ErrCanaryLocalLaunchUnavailable
+		}
+		renamedPath := filepath.Join(
+			filepath.Dir(resolvedPath),
+			newFileName,
+		)
+		if _, statErr := os.Stat(renamedPath); statErr == nil {
+			return nil, ErrCanaryDeploymentFileExists
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return nil, fmt.Errorf("inspect renamed canary destination: %w", statErr)
+		}
+		if err = os.Rename(resolvedPath, renamedPath); err != nil {
+			return nil, fmt.Errorf("rename deployed canary: %w", err)
+		}
+		return &LaunchCanaryFileResponse{ID: canary.ID, FileName: canary.FileName, Action: action}, nil
+	case "DELETE":
+		if err = os.Remove(resolvedPath); err != nil {
+			return nil, fmt.Errorf("delete deployed canary: %w", err)
+		}
+		return &LaunchCanaryFileResponse{ID: canary.ID, FileName: canary.FileName, Action: action}, nil
+	default:
+		return nil, ErrCanaryLocalLaunchUnavailable
+	}
+	if err = command.Start(); err != nil {
+		return nil, fmt.Errorf("launch deployed canary: %w", err)
+	}
+	return &LaunchCanaryFileResponse{ID: canary.ID, FileName: canary.FileName, Action: action}, nil
 }
 
 func (s *CanaryService) resolveDeploymentDirectory(

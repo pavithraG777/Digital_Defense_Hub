@@ -58,12 +58,14 @@ const canaryFileSelectColumns = `
 `
 
 type CanaryFileListFilter struct {
-	OrganizationID uuid.UUID
-	DepartmentID   *uuid.UUID
-	CanaryType     string
-	Status         string
-	Limit          int
-	Offset         int
+	OrganizationID          uuid.UUID
+	IncludePlatformOwned    bool
+	IncludeTenantAdminOwned bool
+	DepartmentID            *uuid.UUID
+	CanaryType              string
+	Status                  string
+	Limit                   int
+	Offset                  int
 }
 
 // CreateCanaryFile stores generated canary metadata.
@@ -658,12 +660,30 @@ func buildCanaryFileFilter(
 	filter CanaryFileListFilter,
 ) (string, []any) {
 	conditions := []string{
-		"organization_id = $1",
+		"($2::boolean OR organization_id = $1)",
 		"deleted_at IS NULL",
+		`($2::boolean OR NOT EXISTS (
+			SELECT 1 FROM user_roles platform_ur
+			JOIN roles platform_r ON platform_r.id = platform_ur.role_id
+			WHERE platform_ur.user_id = canary_files.created_by
+			  AND platform_ur.is_active = TRUE
+			  AND UPPER(platform_ur.status) = 'ACTIVE'
+			  AND UPPER(platform_r.role_code) = 'SUPER_ADMIN'
+		))`,
+		`($3::boolean OR NOT EXISTS (
+			SELECT 1 FROM user_roles admin_ur
+			JOIN roles admin_r ON admin_r.id = admin_ur.role_id
+			WHERE admin_ur.user_id = canary_files.created_by
+			  AND admin_ur.is_active = TRUE
+			  AND UPPER(admin_ur.status) = 'ACTIVE'
+			  AND (UPPER(admin_r.role_code) = 'MANAGER' OR UPPER(admin_r.role_code) LIKE '%ADMIN%')
+		))`,
 	}
 
 	arguments := []any{
 		filter.OrganizationID,
+		filter.IncludePlatformOwned,
+		filter.IncludeTenantAdminOwned,
 	}
 
 	if filter.DepartmentID != nil {

@@ -89,6 +89,23 @@ def _stratified_indices(targets, validation_percent, test_percent, seed):
 
 def _group_stratified_indices(path, indexed, manifest, validation_percent, test_percent, seed):
     import random
+    split_manifest = manifest.get("split_manifest")
+    if isinstance(split_manifest, str) and split_manifest:
+        assignments = {}
+        with (path / split_manifest).open(newline="", encoding="utf-8") as stream:
+            for row in csv.DictReader(stream):
+                assignments[row["relative_path"].replace("\\", "/")] = row["split"].strip().lower()
+        result = {"train": [], "validation": [], "test": []}
+        for index, (filename, _) in enumerate(indexed.samples):
+            relative = Path(filename).relative_to(path).as_posix()
+            split = assignments.get(relative)
+            if split not in result:
+                raise TrainingInputError(f"split manifest is missing or invalid for image: {relative}")
+            result[split].append(index)
+        for split, indices in result.items():
+            if not indices or {indexed.targets[i] for i in indices} != {0, 1}:
+                raise TrainingInputError(f"explicit {split} split must contain both classes")
+        return result["train"], result["validation"], result["test"]
     manifest_name = manifest.get("group_manifest")
     if not isinstance(manifest_name, str) or not manifest_name:
         return _stratified_indices(indexed.targets, validation_percent, test_percent, seed)
@@ -117,6 +134,36 @@ def _group_stratified_indices(path, indexed, manifest, validation_percent, test_
     for group, indices in grouped.items():
         (validation if group in validation_names else test if group in test_names else train).extend(indices)
     return train, validation, test
+
+
+def _category_balanced_training_weights(path, indexed, manifest, train_indices):
+    provenance_name = manifest.get("provenance_manifest")
+    if not isinstance(provenance_name, str) or not provenance_name:
+        counts = [sum(indexed.targets[i] == label for i in train_indices) for label in range(2)]
+        return [1 / counts[indexed.targets[i]] for i in train_indices]
+    rows = {}
+    with (path / provenance_name).open(newline="", encoding="utf-8") as stream:
+        for row in csv.DictReader(stream):
+            rows[row["relative_path"].replace("\\", "/")] = row.get("category", "uncategorized")
+    buckets = {}
+    sample_buckets = []
+    for index in train_indices:
+        relative = Path(indexed.samples[index][0]).relative_to(path).as_posix()
+        if relative not in rows:
+            raise TrainingInputError(f"provenance manifest is missing image: {relative}")
+        bucket = (indexed.targets[index], rows[relative])
+        sample_buckets.append(bucket)
+        buckets[bucket] = buckets.get(bucket, 0) + 1
+    categories_per_class = {
+        label: len({category for bucket_label, category in buckets if bucket_label == label})
+        for label in range(2)
+    }
+    if any(value == 0 for value in categories_per_class.values()):
+        raise TrainingInputError("training split must contain source categories for both classes")
+    return [
+        1 / (categories_per_class[label] * buckets[(label, category)])
+        for label, category in sample_buckets
+    ]
 
 
 def _evaluate(model, loader, device):
@@ -165,8 +212,7 @@ def train_image_classifier(request: ImageTrainingRequest, settings: Settings) ->
         raise TrainingInputError("dataset leaves too few training images")
     train_data = datasets.ImageFolder(str(path), transform=train_transform)
     eval_data = datasets.ImageFolder(str(path), transform=eval_transform)
-    counts = [sum(indexed.targets[i] == c for i in train_idx) for c in range(2)]
-    weights = [1 / counts[indexed.targets[i]] for i in train_idx]
+    weights = _category_balanced_training_weights(path, indexed, manifest, train_idx)
     sampler = WeightedRandomSampler(weights, len(weights), generator=torch.Generator().manual_seed(request.seed))
     train_loader = DataLoader(Subset(train_data, train_idx), request.batch_size, sampler=sampler, num_workers=0)
     val_loader = DataLoader(Subset(eval_data, val_idx), request.batch_size, num_workers=0)

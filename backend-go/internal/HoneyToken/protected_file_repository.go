@@ -214,3 +214,48 @@ func (r *Repository) FindProtectedFileByID(
 
 	return &file, nil
 }
+
+// ListProtectedFiles returns non-deleted files belonging to one organization.
+func (r *Repository) ListProtectedFiles(ctx context.Context, organizationID uuid.UUID) ([]ProtectedFile, error) {
+	const query = `
+		SELECT id, organization_id, department_id, owner_user_id,
+			original_file_name, original_extension, original_file_path,
+			protected_file_name, protected_file_path, metadata_file_name,
+			metadata_file_path, file_size_bytes, mime_type, sha256_hash,
+			encryption_algorithm, encryption_key_id, category, sensitivity,
+			classification, retention_policy, retention_until,
+			monitoring_enabled, honeytoken_enabled, canary_enabled, status,
+			protected_at, archived_at, created_at, updated_at, deleted_at
+		FROM protected_files
+		WHERE organization_id=$1 AND deleted_at IS NULL
+		ORDER BY created_at DESC
+		LIMIT 500;
+	`
+	rows, err := r.db.Query(ctx, query, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list protected files: %w", err)
+	}
+	defer rows.Close()
+	files := make([]ProtectedFile, 0)
+	for rows.Next() {
+		var file ProtectedFile
+		if err = rows.Scan(
+			&file.ID, &file.OrganizationID, &file.DepartmentID, &file.OwnerUserID,
+			&file.OriginalFileName, &file.OriginalExtension, &file.OriginalFilePath,
+			&file.ProtectedFileName, &file.ProtectedFilePath, &file.MetadataFileName,
+			&file.MetadataFilePath, &file.FileSizeBytes, &file.MimeType, &file.SHA256Hash,
+			&file.EncryptionAlgorithm, &file.EncryptionKeyID, &file.Category,
+			&file.Sensitivity, &file.Classification, &file.RetentionPolicy,
+			&file.RetentionUntil, &file.MonitoringEnabled, &file.HoneytokenEnabled,
+			&file.CanaryEnabled, &file.Status, &file.ProtectedAt, &file.ArchivedAt,
+			&file.CreatedAt, &file.UpdatedAt, &file.DeletedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan protected file: %w", err)
+		}
+		files = append(files, file)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate protected files: %w", err)
+	}
+	return files, nil
+}

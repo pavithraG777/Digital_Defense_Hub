@@ -79,19 +79,21 @@ const fileEventSelectColumns = `
 `
 
 type FileEventListFilter struct {
-	OrganizationID uuid.UUID
-	DepartmentID   *uuid.UUID
-	HoneytokenID   *uuid.UUID
-	CanaryFileID   *uuid.UUID
-	SourceType     string
-	EventType      string
-	Severity       string
-	Status         string
-	IsSuspicious   *bool
-	From           *time.Time
-	To             *time.Time
-	Limit          int
-	Offset         int
+	OrganizationID          uuid.UUID
+	IncludePlatformOwned    bool
+	IncludeTenantAdminOwned bool
+	DepartmentID            *uuid.UUID
+	HoneytokenID            *uuid.UUID
+	CanaryFileID            *uuid.UUID
+	SourceType              string
+	EventType               string
+	Severity                string
+	Status                  string
+	IsSuspicious            *bool
+	From                    *time.Time
+	To                      *time.Time
+	Limit                   int
+	Offset                  int
 }
 
 // CreateFileEvent stores an append-only forensic event.
@@ -614,11 +616,40 @@ func buildFileEventFilter(
 	filter FileEventListFilter,
 ) (string, []any) {
 	conditions := []string{
-		"organization_id = $1",
+		"($2::boolean OR organization_id = $1)",
+		`($2::boolean OR NOT EXISTS (
+			SELECT 1
+			FROM users platform_u
+			JOIN user_roles platform_ur ON platform_ur.user_id = platform_u.id
+			JOIN roles platform_r ON platform_r.id = platform_ur.role_id
+			WHERE platform_ur.is_active = TRUE
+			  AND UPPER(platform_ur.status) = 'ACTIVE'
+			  AND UPPER(platform_r.role_code) = 'SUPER_ADMIN'
+			  AND platform_u.id IN (
+				SELECT created_by FROM canary_files WHERE id = file_events.canary_file_id
+				UNION SELECT created_by FROM honeytokens WHERE id = file_events.honeytoken_id
+				UNION SELECT owner_user_id FROM protected_files WHERE id = file_events.protected_file_id
+			  )
+		))`,
+		`($3::boolean OR NOT EXISTS (
+			SELECT 1
+			FROM user_roles admin_ur
+			JOIN roles admin_r ON admin_r.id = admin_ur.role_id
+			WHERE admin_ur.is_active = TRUE
+			  AND UPPER(admin_ur.status) = 'ACTIVE'
+			  AND (UPPER(admin_r.role_code) = 'MANAGER' OR UPPER(admin_r.role_code) LIKE '%ADMIN%')
+			  AND admin_ur.user_id IN (
+				SELECT created_by FROM canary_files WHERE id = file_events.canary_file_id
+				UNION SELECT created_by FROM honeytokens WHERE id = file_events.honeytoken_id
+				UNION SELECT owner_user_id FROM protected_files WHERE id = file_events.protected_file_id
+			  )
+		))`,
 	}
 
 	arguments := []any{
 		filter.OrganizationID,
+		filter.IncludePlatformOwned,
+		filter.IncludeTenantAdminOwned,
 	}
 
 	if filter.DepartmentID != nil {

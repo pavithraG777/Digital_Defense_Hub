@@ -179,6 +179,10 @@ func (s *Service) issueLoginTokens(
 	roles []string,
 	mfaVerified bool,
 ) (*LoginResponse, error) {
+	permissions, err := s.repository.GetActivePermissionCodes(ctx, user.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve user permissions: %w", err)
+	}
 
 	sessionID := uuid.New()
 
@@ -282,6 +286,8 @@ func (s *Service) issueLoginTokens(
 		ExpiresInSeconds: expiresInSeconds,
 		User: UserResponse{
 			ID:                 user.ID.String(),
+			OrganizationID:     user.OrganizationID.String(),
+			OrganizationType:   user.OrganizationType,
 			Username:           user.Username,
 			OfficialEmail:      user.OfficialEmail,
 			DisplayName:        displayName,
@@ -290,6 +296,7 @@ func (s *Service) issueLoginTokens(
 			MustChangePassword: user.MustChangePassword,
 			MFAEnabled:         user.MFAEnabled,
 			Roles:              roles,
+			Permissions:        permissions,
 		},
 	}
 

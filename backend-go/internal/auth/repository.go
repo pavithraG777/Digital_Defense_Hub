@@ -28,6 +28,38 @@ type Repository struct {
 	db *pgxpool.Pool
 }
 
+// GetActivePermissionCodes returns the effective permission catalogue for the
+// authenticated user. The frontend uses this only to hide inaccessible
+// navigation; every API remains protected by server-side middleware.
+func (r *Repository) GetActivePermissionCodes(ctx context.Context, userID uuid.UUID) ([]string, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT DISTINCT UPPER(p.permission_code)
+		FROM user_roles ur
+		JOIN roles r ON r.id = ur.role_id AND r.deleted_at IS NULL AND UPPER(r.status) = 'ACTIVE'
+		JOIN role_permissions rp ON rp.role_id = r.id AND rp.is_active = TRUE
+		JOIN permissions p ON p.id = rp.permission_id AND UPPER(p.status) = 'ACTIVE'
+		WHERE ur.user_id = $1
+		  AND ur.is_active = TRUE
+		  AND UPPER(ur.status) = 'ACTIVE'
+		  AND ur.valid_from <= CURRENT_TIMESTAMP
+		  AND (ur.expires_at IS NULL OR ur.expires_at > CURRENT_TIMESTAMP)
+		  AND (rp.expires_at IS NULL OR rp.expires_at > CURRENT_TIMESTAMP)
+		ORDER BY UPPER(p.permission_code)`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	permissions := make([]string, 0)
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			return nil, err
+		}
+		permissions = append(permissions, code)
+	}
+	return permissions, rows.Err()
+}
+
 func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{
 		db: db,
@@ -42,7 +74,8 @@ func (r *Repository) FindUserByIdentifier(
 	const query = `
 		SELECT
 			u.id,
-			u.organization_id,
+                        u.organization_id,
+                        o.organization_type,
 			u.username,
 			u.official_email,
 			u.password_hash,
@@ -76,7 +109,8 @@ func (r *Repository) FindUserByIdentifier(
 				),
 				u.username
 			) AS display_name
-		FROM users u
+                FROM users u
+                INNER JOIN organizations o ON o.id = u.organization_id
 		LEFT JOIN user_profiles up
 			ON up.user_id = u.id
 		WHERE
@@ -98,6 +132,7 @@ func (r *Repository) FindUserByIdentifier(
 	).Scan(
 		&user.ID,
 		&user.OrganizationID,
+		&user.OrganizationType,
 		&user.Username,
 		&user.OfficialEmail,
 		&user.PasswordHash,
@@ -147,33 +182,35 @@ func (r *Repository) FindUserByID(
 
 	const query = `
 		SELECT
-			id,
-			organization_id,
-			username,
-			official_email,
-			password_hash,
-			user_type,
-			account_status,
-			email_verified,
-			phone_verified,
-			mfa_enabled,
-			mfa_secret_encrypted,
-			mfa_recovery_code_hashes,
-			must_change_password,
-			failed_login_attempts,
-			locked_until,
-			password_changed_at,
-			last_login_at,
-			last_logout_at,
-			preferred_language,
-			timezone,
-			created_at,
-			updated_at,
-			deleted_at
-		FROM users
-		WHERE
-			id = $1
-			AND deleted_at IS NULL
+                        u.id,
+                        u.organization_id,
+                        o.organization_type,
+                        u.username,
+                        u.official_email,
+                        u.password_hash,
+                        u.user_type,
+                        u.account_status,
+                        u.email_verified,
+                        u.phone_verified,
+                        u.mfa_enabled,
+                        u.mfa_secret_encrypted,
+                        u.mfa_recovery_code_hashes,
+                        u.must_change_password,
+                        u.failed_login_attempts,
+                        u.locked_until,
+                        u.password_changed_at,
+                        u.last_login_at,
+                        u.last_logout_at,
+                        u.preferred_language,
+                        u.timezone,
+                        u.created_at,
+                        u.updated_at,
+                        u.deleted_at
+                FROM users u
+                INNER JOIN organizations o ON o.id = u.organization_id
+                WHERE
+                        u.id = $1
+                        AND u.deleted_at IS NULL
 		LIMIT 1;
 	`
 
@@ -186,6 +223,7 @@ func (r *Repository) FindUserByID(
 	).Scan(
 		&user.ID,
 		&user.OrganizationID,
+		&user.OrganizationType,
 		&user.Username,
 		&user.OfficialEmail,
 		&user.PasswordHash,
@@ -613,12 +651,13 @@ func (r *Repository) GetActiveRoleCodes(
 		WHERE
 			ur.user_id = $1
 			AND ur.status = 'ACTIVE'
+			AND ur.is_active = TRUE
 			AND r.status = 'ACTIVE'
 			AND r.deleted_at IS NULL
 			AND ur.valid_from <= timezone('UTC', CURRENT_TIMESTAMP)
 			AND (
-				ur.valid_until IS NULL
-				OR ur.valid_until > timezone('UTC', CURRENT_TIMESTAMP)
+				ur.expires_at IS NULL
+				OR ur.expires_at > timezone('UTC', CURRENT_TIMESTAMP)
 			)
 		ORDER BY
 			ur.is_primary DESC,

@@ -311,6 +311,7 @@ class MediaForensicsRuntime:
         return (
             self.model_root,
             self.training_artifact_root,
+            (self.backend_storage_root / "models").resolve(),
         )
 
     def verify_file_hash(

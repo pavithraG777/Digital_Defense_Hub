@@ -536,6 +536,16 @@ func (s *RotationService) GetRotation(
 	)
 }
 
+func (s *RotationService) ListRotations(
+	ctx context.Context,
+	organizationID uuid.UUID,
+) ([]CanaryRotation, error) {
+	if s == nil || s.repository == nil {
+		return nil, errors.New("canary rotation service is unavailable")
+	}
+	return s.repository.ListRotations(ctx, organizationID)
+}
+
 func (s *RotationService) failRotation(
 	ctx context.Context,
 	rotation *CanaryRotation,

@@ -16,6 +16,7 @@ import { InvestigationCasesPage } from "./pages/InvestigationCasesPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MfaPage } from "./pages/MfaPage";
 import { MfaSetupPage } from "./pages/MfaSetupPage";
+import { MalwareAnalysisPage } from "./pages/MalwareAnalysisPage";
 import { ModuleWorkspacePage } from "./pages/ModuleWorkspacePage";
 import { ModulesPage } from "./pages/ModulesPage";
 import { IamManagementPage } from "./pages/IamManagementPage";
@@ -25,6 +26,10 @@ import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { RegisterPage } from "./pages/RegisterPage";
 import { ThreatCenterPage } from "./pages/ThreatCenterPage";
 import { ThreatScorePage } from "./pages/ThreatScorePage";
+import { SettingsWorkspacePage } from "./pages/SettingsWorkspacePage";
+import { RansomwareScannerPage } from "./pages/RansomwareScannerPage";
+import { AdaptiveFingerprintPage } from "./pages/AdaptiveFingerprintPage";
+import { DfirWorkspacePage } from "./pages/DfirWorkspacePage";
 import { session } from "./lib/api";
 import type { AuthTokens, AuthUser } from "./types";
 
@@ -79,6 +84,11 @@ export function App() {
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/module/deepfake/media" element={<DeepfakeImageAnalysisPage />} />
         <Route path="/module/deepfake/analysis" element={<DeepfakeAnalysisHistoryPage />} />
+        <Route path="/module/ransomware/dashboard" element={<RansomwareScannerPage />} />
+        <Route path="/module/ransomware/:screenId" element={<Navigate to="/module/ransomware/dashboard" replace />} />
+        <Route path="/module/adaptive-deception/fingerprints" element={<AdaptiveFingerprintPage />} />
+        <Route path="/dfir" element={<DfirWorkspacePage />} />
+        <Route path="/module/analysis-operations/malware" element={<MalwareAnalysisPage />} />
         <Route path="/organizations" element={<OrganizationManagementPage />} />
         <Route path="/users" element={<IamManagementPage initialTab="users" />} />
         <Route path="/roles" element={<IamManagementPage initialTab="roles" />} />
@@ -90,11 +100,16 @@ export function App() {
         <Route path="/attack-stories" element={<AttackStoriesPage />} />
         <Route path="/module/investigations/:screenId" element={<Navigate to="/investigations" replace />} />
         <Route path="/module/intelligence/replay" element={<Navigate to="/attack-stories" replace />} />
+        <Route path="/module/organizations/:screenId" element={<OrganizationManagementPage />} />
+        <Route path="/module/users/:screenId" element={<IamManagementPage initialTab="users" />} />
+        <Route path="/module/roles/:screenId" element={<IamManagementPage initialTab="roles" />} />
+        <Route path="/module/permissions/:screenId" element={<IamManagementPage initialTab="permissions" />} />
         <Route path="/intelligence" element={<ModulesPage title="Intelligence Center" description="Threat correlation and enrichment insights" path="/intelligence/dashboard" emptyMessage="No intelligence data available yet." />} />
         <Route path="/reports" element={<ModulesPage title="Reports & Analytics" description="Executive and operational reporting" path="/reports" emptyMessage="No reports available yet." />} />
-        <Route path="/settings" element={<div className="page"><div className="hero"><div><h1>Settings</h1><p>Enterprise configuration and governance controls</p></div></div></div>} />
+        <Route path="/settings" element={<Navigate to="/module/settings/mfa" replace />} />
         <Route path="/profile" element={<div className="page"><div className="hero"><div><h1>My Profile</h1><p>Identity, MFA, and account security control center</p></div></div><div className="card profile-security-card"><h3>Google Authenticator</h3><p className="muted">Generate and verify a replacement QR code without disabling your current authenticator first.</p><Link className="primary-link" to="/mfa/setup">Replace Authenticator</Link></div></div>} />
         <Route path="/module/:moduleId" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/module/settings/:screenId" element={<SettingsWorkspacePage />} />
         <Route path="/module/:moduleId/:screenId" element={<ModuleWorkspacePage />} />
       </Route>
     </Routes>

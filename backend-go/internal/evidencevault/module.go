@@ -37,6 +37,7 @@ func RegisterRoutes(g *gin.RouterGroup, h *Handler, db *pgxpool.Pool) {
 	r.POST("/objects", middleware.RequirePermission(db, "EVIDENCE_VAULT_MANAGE"), h.PreserveObject)
 	r.GET("/objects/:id/content", middleware.RequirePermission(db, "EVIDENCE_VAULT_VIEW"), h.GetObjectContent)
 	r.GET("/jobs/:id", middleware.RequirePermission(db, "EVIDENCE_VAULT_VIEW"), h.Get)
+	r.POST("/jobs/:id/authorize", middleware.RequirePermission(db, "EVIDENCE_VAULT_VIEW"), h.AuthorizeAccess)
 	r.PATCH("/jobs/:id/lifecycle", middleware.RequirePermission(db, "EVIDENCE_VAULT_MANAGE"), h.Lifecycle)
 	r.GET("/jobs/:id/custody", middleware.RequirePermission(db, "EVIDENCE_VAULT_VIEW"), h.Custody)
 	r.POST("/manifests", middleware.RequirePermission(db, "EVIDENCE_VAULT_MANAGE"), h.CreateManifest)
@@ -123,6 +124,9 @@ func (h *Handler) Get(c *gin.Context) {
 		response.NotFound(c, "Evidence job not found", nil)
 		return
 	}
+	if !h.requireAccess(c, org, id) {
+		return
+	}
 	response.OK(c, "Evidence job loaded", job)
 }
 
@@ -170,6 +174,9 @@ func (h *Handler) Custody(c *gin.Context) {
 	id, e := uuid.Parse(c.Param("id"))
 	if !ok || e != nil {
 		response.BadRequest(c, "Invalid evidence context", nil)
+		return
+	}
+	if !h.requireAccess(c, org, id) {
 		return
 	}
 	events, e := h.repo.Custody(c, org, id)

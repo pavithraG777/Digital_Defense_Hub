@@ -62,6 +62,7 @@ func (s *Service) CreateRole(
 func (s *Service) ListRoles(
 	ctx context.Context,
 	organizationID uuid.UUID,
+	global bool,
 	req ListRolesRequest,
 ) (*ListRolesResponse, error) {
 
@@ -83,6 +84,7 @@ func (s *Service) ListRoles(
 	roles, totalCount, err := s.repository.ListRoles(
 		ctx,
 		organizationID,
+		global,
 		req,
 	)
 	if err != nil {

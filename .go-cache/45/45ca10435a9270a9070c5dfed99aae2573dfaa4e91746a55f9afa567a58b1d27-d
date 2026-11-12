@@ -1,0 +1,15 @@
+./detector.go
+./domain.go
+./feature.go
+./handler.go
+./repository.go
+./routes.go
+./service.go
+./worker.go
+./correlation_test.go
+./evidence_test.go
+./handler_ingest_test.go
+./handler_test.go
+./integration_test.go
+./report_test.go
+./service_test.go

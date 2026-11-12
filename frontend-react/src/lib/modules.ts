@@ -2,7 +2,6 @@ import type { ApiSource, ModuleDefinition, ScreenDefinition } from "../types";
 
 const live = (id: string, label: string, path: string, detailPath?: string): ApiSource => ({ id, label, path, detailPath });
 const connected = (id: string, title: string, description: string, sources: ApiSource[], actions?: ScreenDefinition["actions"]): ScreenDefinition => ({ id, title, description, sources, actions });
-const planned = (id: string, title: string, description: string, unavailable = "This screen is ready in the navigation, but the current Go backend does not yet expose a matching API."): ScreenDefinition => ({ id, title, description, unavailable });
 
 const userCreateFields = [
   { name: "username", label: "Username", required: true },
@@ -45,9 +44,9 @@ export const modules: ModuleDefinition[] = [
     id: "organizations", title: "Organization Management", icon: "Building2", description: "Tenant onboarding, approval, and organization lifecycle operations.",
     screens: [
       connected("directory", "Organizations", "Review organization registrations and lifecycle status.", [live("organizations", "Organization directory", "/admin/organizations")], [{ label: "Create organization", method: "POST", path: "/admin/organizations", fields: [{ name: "name", label: "Organization name", required: true }, { name: "organization_code", label: "Organization code", required: true }, { name: "official_email", label: "Official email", type: "email" as const, required: true }] }]),
-      planned("register", "Register organization", "Submit a new organization application for super-admin approval."),
-      planned("details", "Organization details", "Review organization profile, contacts, and tenant configuration."),
-      planned("settings", "Organization settings", "Manage organization-level security configuration."),
+      connected("register", "Register organization", "Create and review organization records through the audited administrator workflow.", [live("organizations", "Organization directory", "/admin/organizations")], [{ label: "Create organization", method: "POST", path: "/admin/organizations", fields: [{ name: "name", label: "Organization name", required: true }, { name: "organization_code", label: "Organization code", required: true }, { name: "official_email", label: "Official email", type: "email" as const, required: true }] }]),
+      connected("details", "Organization details", "Review live organization profile, contacts, status, and approval history.", [live("organizations", "Organization directory", "/admin/organizations", "/admin/organizations/:id/history")]),
+      connected("settings", "Organization settings", "Review the tenant record and current organization security policy.", [live("organizations", "Organization directory", "/admin/organizations"), live("media-policy", "Media forensic policy", "/deepfake-forensics/organization-policy")]),
       connected("history", "Approval history", "The backend exposes history per organization; select an organization row to inspect its record.", [live("organizations", "Organization directory", "/admin/organizations", "/admin/organizations/:id/history")]),
     ],
   },
@@ -57,7 +56,7 @@ export const modules: ModuleDefinition[] = [
       connected("directory", "Users", "Live user directory with account status and role context.", [live("users", "User directory", "/admin/users?page=1&limit=50", "/admin/users/:id")], [{ label: "Create user", method: "POST", path: "/admin/users", fields: userCreateFields }]),
       connected("create", "Create user", "Create an organization user through the backend’s audited user workflow.", [live("roles", "Available roles", "/admin/roles")], [{ label: "Create user", method: "POST", path: "/admin/users", fields: userCreateFields }]),
       connected("profile", "User profile", "Open a user from the live directory to inspect their identity and assigned role.", [live("users", "User directory", "/admin/users?page=1&limit=50", "/admin/users/:id")]),
-      planned("search", "Search users", "Search and filter user accounts across your organization."),
+      connected("search", "Search users", "Search and filter the backend user directory by query and account state.", [live("users", "Search results", "/admin/users?page=1&limit=100")]),
     ],
   },
   {
@@ -65,50 +64,50 @@ export const modules: ModuleDefinition[] = [
     screens: [
       connected("directory", "Roles", "Live roles configured in the backend.", [live("roles", "Role directory", "/admin/roles", "/admin/roles/:id")], [{ label: "Create role", method: "POST", path: "/admin/roles", fields: [{ name: "role_code", label: "Role code", required: true }, { name: "role_name", label: "Role name", required: true }, { name: "description", label: "Description", type: "textarea" as const }] }]),
       connected("permissions", "Role permissions", "Select a role to inspect its real permission assignments.", [live("roles", "Role directory", "/admin/roles", "/admin/roles/:id/permissions")]),
-      planned("analytics", "Role analytics", "Explore role distribution, high-privilege access, and entitlement risk."),
-      planned("audit", "Role audit logs", "Review all audited role changes."),
+      connected("analytics", "Role analytics", "Compare live roles, users, and permission assignments.", [live("roles", "Roles", "/admin/roles"), live("users", "Users", "/admin/users?page=1&limit=100")]),
+      connected("audit", "Role audit logs", "Review immutable administrative activity affecting roles.", [live("audit", "Role audit activity", "/admin/audit-logs?resource_type=ROLE")]),
     ],
   },
   {
     id: "permissions", title: "Permission Management", icon: "KeyRound", description: "Manage granular platform permissions and access controls.",
     screens: [
       connected("directory", "Permissions", "Live permission catalog from the backend.", [live("permissions", "Permission directory", "/admin/permissions", "/admin/permissions/:id")], [{ label: "Create permission", method: "POST", path: "/admin/permissions", fields: [{ name: "permission_code", label: "Permission code", required: true }, { name: "permission_name", label: "Permission name", required: true }, { name: "description", label: "Description", type: "textarea" as const }] }]),
-      planned("matrix", "Permission matrix", "Review access coverage across roles and protected product areas."),
-      planned("audit", "Permission audit", "Review permission change history."),
+      connected("matrix", "Permission matrix", "Review the live permission catalog beside configured roles.", [live("permissions", "Permissions", "/admin/permissions"), live("roles", "Roles", "/admin/roles")]),
+      connected("audit", "Permission audit", "Review immutable permission administration activity.", [live("audit", "Permission audit activity", "/admin/audit-logs?resource_type=PERMISSION")]),
     ],
   },
   {
     id: "user-roles", title: "User Role Assignment", icon: "UserCog", description: "Assign, replace, and review user role entitlements.",
     screens: [
-      connected("assignments", "User role assignments", "Choose a user from the live directory to inspect roles.", [live("users", "Users", "/admin/users?page=1&limit=50", "/admin/users/:id/roles")]),
-      planned("bulk", "Bulk role assignment", "Apply an approved role change across multiple organization users."),
-      planned("temporary", "Temporary access", "Time-bound and emergency access workflow."),
-      planned("approvals", "Assignment approvals", "Approval workflow for sensitive access changes."),
-      planned("analytics", "Assignment analytics", "Analyze role assignment coverage and risk."),
-      planned("audit", "Assignment audit logs", "Review user role assignment events."),
+      connected("assignments", "User role assignments", "Choose a user from the live directory to inspect or assign roles.", [live("users", "Users", "/admin/users?page=1&limit=50", "/admin/users/:id/roles")], [{ label: "Assign roles to selected user", method: "POST", path: "/admin/users/:id/roles", fields: [{ name: "role_ids", label: "Role IDs", type: "json", required: true, placeholder: "[\"role-uuid\"]" }] }]),
+      connected("bulk", "Bulk role assignment", "Apply one or more roles to multiple users in one authorized operation.", [live("users", "Users", "/admin/users?page=1&limit=100"), live("roles", "Roles", "/admin/roles")], [{ label: "Bulk assign roles", method: "POST", path: "/admin/user-role-assignments/bulk", fields: [{ name: "user_ids", label: "User IDs", type: "json", required: true, placeholder: "[\"user-uuid-1\", \"user-uuid-2\"]" }, { name: "role_ids", label: "Role IDs", type: "json", required: true, placeholder: "[\"role-uuid\"]" }, { name: "expires_at", label: "Optional expiry", type: "datetime-local" }] }]),
+      connected("temporary", "Temporary access", "Grant an audited role assignment that expires automatically.", [live("users", "Users", "/admin/users?page=1&limit=100", "/admin/users/:id/roles"), live("roles", "Roles", "/admin/roles")], [{ label: "Grant temporary roles", method: "POST", path: "/admin/users/:id/roles", fields: [{ name: "role_ids", label: "Role IDs", type: "json", required: true, placeholder: "[\"role-uuid\"]" }, { name: "expires_at", label: "Expires at", type: "datetime-local", required: true }] }]),
+      connected("approvals", "Assignment approvals", "Request, approve, or reject audited multi-user role assignments.", [live("approvals", "Approval queue", "/admin/role-assignment-approvals")], [{ label: "Request role assignment", method: "POST", path: "/admin/role-assignment-approvals", fields: [{ name: "user_ids", label: "User IDs", type: "json", required: true }, { name: "role_ids", label: "Role IDs", type: "json", required: true }, { name: "expires_at", label: "Optional expiry", type: "datetime-local" }, { name: "reason", label: "Business reason", type: "textarea", required: true }] }, { label: "Decide selected request", method: "POST", path: "/admin/role-assignment-approvals/:id/decision", fields: [{ name: "decision", label: "Decision", type: "select", required: true, options: [{ label: "Approve", value: "APPROVED" }, { label: "Reject", value: "REJECTED" }] }, { name: "note", label: "Decision note", type: "textarea" }] }]),
+      connected("analytics", "Assignment analytics", "Analyze live users and role coverage.", [live("users", "Users", "/admin/users?page=1&limit=100"), live("roles", "Roles", "/admin/roles")]),
+      connected("audit", "Assignment audit logs", "Review role assignment events.", [live("audit", "Assignment audit", "/admin/audit-logs?resource_type=USER_ROLE")]),
     ],
   },
   {
     id: "role-permissions", title: "Role Permission Assignment", icon: "BadgeCheck", description: "Assign and review permissions held by each role.",
     screens: [
       connected("assignments", "Role permission assignments", "Choose a role from the live directory to inspect assigned permissions.", [live("roles", "Roles", "/admin/roles", "/admin/roles/:id/permissions")]),
-      planned("replace", "Replace permissions", "Replace the permissions associated with a role."),
-      planned("audit", "Permission assignment audit", "Review role-permission assignment history."),
+      connected("replace", "Replace permissions", "Choose a role and replace its complete permission set in one audited operation.", [live("roles", "Roles", "/admin/roles", "/admin/roles/:id/permissions"), live("permissions", "Permissions", "/admin/permissions")], [{ label: "Replace selected role permissions", method: "PUT", path: "/admin/roles/:id/permissions", fields: [{ name: "permission_ids", label: "Permission IDs (JSON array)", type: "json" as const, required: true, placeholder: "[]" }, { name: "expires_at", label: "Optional expiry (RFC3339)" }] }]),
+      connected("audit", "Permission assignment audit", "Review role-permission assignment history.", [live("audit", "Role permission audit", "/admin/audit-logs?resource_type=ROLE_PERMISSION")]),
     ],
   },
   {
     id: "protected-files", title: "Protected File Management", icon: "FileLock2", description: "Register protected assets and restore files through the audited protection workflow.",
     screens: [
-      planned("directory", "Protected files", "The current backend supports registration and per-file retrieval, but does not expose a protected-file list endpoint."),
-      planned("details", "Protected file details", "Inspect protection status and restore history for a selected protected asset."),
-      planned("restore", "Restore protected file", "Restore a protected file through the backend’s secure recovery flow."),
+      connected("directory", "Protected files", "Organization-scoped protected-file inventory with safe metadata only.", [live("files", "Protected files", "/protected-files", "/protected-files/:id")]),
+      connected("details", "Protected file details", "Inspect safe protection state without exposing paths, keys, or hashes.", [live("files", "Protected files", "/protected-files", "/protected-files/:id")]),
+      connected("restore", "Restore protected file", "Select an owned protected file and complete the MFA/password restore workflow.", [live("files", "Protected files", "/protected-files", "/protected-files/:id")], [{ label: "Send restore OTP", method: "POST", path: "/protected-files/:id/restore/owner/start" }, { label: "Verify and restore", method: "POST", path: "/protected-files/:id/restore/owner", fields: [{ name: "restore_reason", label: "Restore reason", type: "textarea" as const, required: true }, { name: "mfa_challenge_id", label: "MFA challenge ID", required: true }, { name: "email_code", label: "Email OTP", required: true }, { name: "password", label: "Account password", type: "password" as const, required: true }, { name: "device_id", label: "Approved device ID", required: true }, { name: "download", label: "Download restored file", type: "select" as const, required: true, options: [{ label: "Yes", value: "true" }, { label: "No", value: "false" }] }] }]),
     ],
   },
   {
     id: "encryption", title: "Encryption Key Management", icon: "LockKeyhole", description: "Manage tenant encryption keys without exposing sensitive material.",
     screens: [
       connected("active", "Active encryption key", "View metadata for the active organization encryption key.", [live("active-key", "Active encryption key", "/encryption-keys/active")]),
-      planned("rotation", "Key rotation history", "Review cryptographic key-rotation history."),
+      connected("rotation", "Key rotation history", "Review complete safe key history and create the next organization key.", [live("keys", "Encryption key history", "/encryption-keys")], [{ label: "Rotate encryption key", method: "POST", path: "/encryption-keys", fields: [{ name: "key_name", label: "New key name", required: true }, { name: "purpose", label: "Rotation purpose", required: true }] }]),
     ],
   },
   {
@@ -118,7 +117,7 @@ export const modules: ModuleDefinition[] = [
       connected("details", "Honeytoken details", "Select an inventory row to retrieve its backend detail record.", [live("honeytokens", "Honeytoken inventory", "/honeytokens", "/honeytokens/:id")]),
       connected("create", "Create honeytoken", "Create a new deception Honeytoken through the dedicated management workflow.", [live("honeytokens", "Honeytoken inventory", "/honeytokens", "/honeytokens/:id")]),
       connected("deploy", "Deploy honeytoken", "Record the approved logical placement of a selected Honeytoken.", [live("honeytokens", "Honeytoken inventory", "/honeytokens", "/honeytokens/:id")]),
-      planned("validate", "Validate honeytoken", "Validate a deployed honeytoken against its location."),
+      connected("validate", "Validate honeytoken", "Select a deployed honeytoken and validate an observed value.", [live("honeytokens", "Honeytokens", "/honeytokens", "/honeytokens/:id")], [{ label: "Validate observed value", method: "POST", path: "/honeytokens/:id/validate", fields: [{ name: "observed_value", label: "Observed value", type: "textarea" as const, required: true }] }]),
     ],
   },
   {
@@ -135,7 +134,7 @@ export const modules: ModuleDefinition[] = [
     screens: [
       connected("live", "Live file events", "Real event records emitted by the file monitoring pipeline.", [live("events", "File events", "/file-events", "/file-events/:id")]),
       connected("timeline", "Event timeline", "Use returned file event timestamps to review the live timeline.", [live("events", "File events", "/file-events", "/file-events/:id")]),
-      planned("search", "Search events", "Search events by asset, file, action, and time range."),
+      connected("search", "Search events", "Load authoritative events for client-side search and backend-supported filters.", [live("events", "File events", "/file-events", "/file-events/:id")]),
     ],
   },
   {
@@ -152,7 +151,7 @@ export const modules: ModuleDefinition[] = [
       connected("dashboard", "Incident dashboard", "Live incident queue with operational status and severity evidence.", [live("incidents", "Incident queue", "/incidents", "/incidents/:id")]),
       connected("directory", "Incident list", "Review and triage the live incident queue.", [live("incidents", "Incident queue", "/incidents", "/incidents/:id")]),
       connected("details", "Incident details", "Select an incident to load its timeline, relationships, and evidence.", [live("incidents", "Incident queue", "/incidents", "/incidents/:id")]),
-      planned("metrics", "Response analytics", "SLA, severity distribution, and response performance analytics."),
+      connected("metrics", "Response analytics", "Backend-calculated incident snapshots and canonical incident records.", [live("analytics", "Incident analytics", "/incident-analytics"), live("incidents", "Incidents", "/incidents")]),
     ],
   },
   {
@@ -179,19 +178,23 @@ export const modules: ModuleDefinition[] = [
     ],
   },
   {
-    id: "pre-encryption", title: "Pre-Encryption Detection", icon: "ScanSearch", description: "Detect suspicious encryption activity before widespread impact.",
+    id: "pre-encryption", title: "Pre-Encryption Detection", icon: "ScanSearch", description: "Review the dedicated behavioural detection queue before files are widely encrypted.",
     screens: [
-      connected("dashboard", "Detection dashboard", "Live detection queue and pre-encryption engine health.", [live("detections", "Detection queue", "/pre-encryption-detections", "/pre-encryption-detections/:id"), live("health", "Detection engine health", "/pre-encryption-detections/engine/health")]),
-      connected("directory", "Detection list", "Review all active and historical pre-encryption detections.", [live("detections", "Detection queue", "/pre-encryption-detections", "/pre-encryption-detections/:id")]),
-      connected("health", "Engine health", "Verify pre-encryption detection engine availability.", [live("health", "Detection engine health", "/pre-encryption-detections/engine/health")]),
+      connected("dashboard", "Pre-Encryption Detection", "Inspect the authoritative behavioural detections, contributing evidence and engine readiness.", [live("detections", "Detection queue", "/pre-encryption-detections", "/pre-encryption-detections/:id"), live("health", "Detection engine health", "/pre-encryption-detections/engine/health")]),
+    ],
+  },
+  {
+    id: "ransomware", title: "Ransomware Detection", icon: "ShieldAlert", description: "Detect encryption behaviour before widespread file loss using rate, entropy, extension, rename, deletion and process-risk signals.",
+    screens: [
+      connected("dashboard", "Ransomware Scanner", "Choose a folder with explicit permission, scan for ransomware indicators, and review graphical results and organization scan history.", [live("history", "Ransomware scan history", "/ransomware/scans")]),
     ],
   },
   {
     id: "adaptive-deception", title: "Adaptive Deception", icon: "Orbit", description: "Monitor canary health, rotations, and attacker interaction fingerprints.",
     screens: [
-      connected("fingerprints", "Fingerprints", "Live attacker-interaction fingerprints from canary activity.", [live("fingerprints", "Fingerprint list", "/adaptive-deception/fingerprints", "/adaptive-deception/fingerprints/:id")]),
-      planned("health", "Canary health", "Choose a canary file to load its health check and operational details."),
-      planned("rotation", "Canary rotation", "Rotate a selected canary and review its rotation history."),
+      connected("fingerprints", "Interaction fingerprints", "Identify the IP, device, user and process behind access to a monitored canary file.", [live("fingerprints", "Detected actor patterns", "/adaptive-deception/fingerprints", "/adaptive-deception/fingerprints/:id")]),
+      connected("health", "Canary integrity health", "Review the latest integrity result for every canary and rerun a check when a file needs attention.", [live("canaries", "Latest canary health results", "/canary-files", "/adaptive-deception/canaries/:id/health")], [{ label: "Check selected canary now", method: "POST", path: "/adaptive-deception/canaries/:id/health-check" }]),
+      connected("rotation", "Canary identity rotation", "Renew a selected decoy's identity and review the audit history of previous rotations.", [live("canaries", "Canaries available for rotation", "/canary-files", "/canary-files/:id"), live("history", "Completed and pending rotations", "/adaptive-deception/rotations", "/adaptive-deception/rotations/:id")], [{ label: "Rotate selected canary", method: "POST", path: "/adaptive-deception/canaries/:id/rotate", fields: [{ name: "rotation_reason", label: "Why are you rotating this canary?", required:true, placeholder:"Scheduled refresh, suspected discovery, or compromised identity" }, { name: "rotation_strategy", label: "Rotation strategy", type:"select", required:true, options:[{label:"Generate a new identity and relocate",value:"REGENERATE_AND_RELOCATE"},{label:"Generate a new identity in the same location",value:"REGENERATE_IN_PLACE"}] }, { name: "new_file_name", label: "New file name (optional)", placeholder:"Leave blank to generate automatically" }] }]),
     ],
   },
   {
@@ -216,7 +219,7 @@ export const modules: ModuleDefinition[] = [
     id: "offline-sync", title: "Offline Synchronization", icon: "RefreshCw", description: "Monitor the secure offline synchronization queue.",
     screens: [
       connected("queue", "Synchronization queue", "Live queued, synced, and failed synchronization records.", [live("queue", "Offline sync queue", "/offline-sync/queue")]),
-      planned("retry", "Retry queue", "Retry failed synchronization records with appropriate authorization."),
+      connected("retry", "Retry queue", "Select a failed synchronization record and return it to the authorized queue.", [live("queue", "Offline sync queue", "/offline-sync/queue")], [{ label: "Retry selected item", method: "POST", path: "/offline-sync/queue/:id/retry" }]),
     ],
   },
   {
@@ -237,24 +240,24 @@ export const modules: ModuleDefinition[] = [
     id: "audit", title: "Audit Logs", icon: "ScrollText", description: "Trace secured administrative and security activity through immutable audit records.",
     screens: [
       connected("directory", "Audit logs", "Live administrative audit records from the backend.", [live("audit-logs", "Audit logs", "/admin/audit-logs", "/admin/audit-logs/:id")]),
-      planned("export", "Export audit logs", "Create an approved audit export for compliance review."),
+      connected("export", "Export audit logs", "Filter the authoritative audit log before producing a compliance export.", [live("audit", "Audit records", "/admin/audit-logs")]),
     ],
   },
   {
     id: "system", title: "System Administration", icon: "ServerCog", description: "Operational health and service administration for platform administrators.",
     screens: [
       connected("health", "System health", "Live availability, readiness, database and AI risk-engine health data.", [live("api", "API health", "/health"), live("readiness", "Service readiness", "/ready"), live("ai", "AI risk engine", "/ai-risk/engine/health")]),
-      planned("workers", "Worker health", "Review worker, service, storage, and database health."),
-      planned("statistics", "Organization statistics", "Review organization and user statistics."),
+      connected("workers", "Worker health", "Review security-event queue health and service readiness.", [live("workers", "Security event worker", "/security-events/worker-health"), live("readiness", "Service readiness", "/ready")]),
+      connected("statistics", "Organization statistics", "Live organization, user, threat, and incident records for operational totals.", [live("organizations", "Organizations", "/admin/organizations"), live("users", "Users", "/admin/users?page=1&limit=100"), live("threats", "Threats", "/threats"), live("incidents", "Incidents", "/incidents")]),
     ],
   },
   {
     id: "reports", title: "Reports & Analytics", icon: "ChartNoAxesCombined", description: "Generate evidence-backed security and operational reports.",
     screens: [
-      planned("threats", "Threat reports", "Generate a threat operations report."),
-      planned("incidents", "Incident reports", "Generate an incident response report."),
-      planned("deepfake", "Deepfake reports", "Generate a deepfake forensic report."),
-      planned("organization", "Organization reports", "Generate organization security and activity reports."),
+      connected("threats", "Threat reports", "Build an evidence-backed view from canonical threat records.", [live("threats", "Threat records", "/threats")]),
+      connected("incidents", "Incident reports", "Review incident reporting projections and canonical incidents.", [live("reports", "Incident reporting", "/incident-reporting"), live("incidents", "Incidents", "/incidents")]),
+      connected("deepfake", "Deepfake reports", "Review signed media forensic reports and their approval state.", [live("reports", "Deepfake forensic reports", "/deepfake-forensics/forensic-reports?page=1&page_size=50", "/deepfake-forensics/forensic-reports/:id")]),
+      connected("organization", "Organization reports", "Review tenant, user, audit, and security activity sources.", [live("organizations", "Organizations", "/admin/organizations"), live("audit", "Audit activity", "/admin/audit-activity")]),
     ],
   },
   {
@@ -320,9 +323,9 @@ export const modules: ModuleDefinition[] = [
     screens: [
       connected("profile", "My profile", "Verify your current authenticated identity directly from the API.", [live("profile", "Authenticated profile", "/profile")]),
       connected("password", "Change password", "Update your password and terminate existing sessions as enforced by the backend.", [], [{ label: "Change password", method: "POST", path: "/change-password", fields: [{ name: "current_password", label: "Current password", type: "password" as const, required: true }, { name: "new_password", label: "New password", type: "password" as const, required: true }, { name: "confirm_password", label: "Confirm new password", type: "password" as const, required: true }] }]),
-      planned("mfa", "MFA policy", "Manage organization MFA and trusted-device policy."),
-      planned("notifications", "Notification settings", "Manage security notification preferences."),
-      planned("appearance", "Theme and language", "Manage visual theme and language preference."),
+      connected("mfa", "MFA policy", "Review current MFA state and manage authenticator enrollment from the secured profile workflow.", [live("profile", "Authenticated profile", "/profile")]),
+      connected("notifications", "Notification settings", "Review live notification delivery and acknowledgement state.", [live("notifications", "My notifications", "/my-notifications")]),
+      connected("appearance", "Theme and language", "Browser-local accessibility preferences are applied without sending personal display choices to the server.", []),
     ],
   },
 ];
@@ -330,9 +333,60 @@ export const modules: ModuleDefinition[] = [
 export const getModule = (moduleId?: string) => modules.find((module) => module.id === moduleId);
 export const getScreen = (moduleId?: string, screenId?: string) => getModule(moduleId)?.screens.find((screen) => screen.id === screenId);
 
+const modulePermissionMap: Record<string, string[]> = {
+  dashboard: [],
+  organizations: ["ORGANIZATION_VIEW", "ORGANIZATION_MANAGE"],
+  users: ["USER_VIEW", "USER_VIEW_DETAILS"],
+  roles: ["ROLE_VIEW"],
+  permissions: ["PERMISSION_VIEW", "ROLE_MANAGE_PERMISSIONS"],
+  "honeytokens": ["HONEYTOKEN_VIEW"],
+  "canary-files": ["CANARY_FILE_VIEW"],
+  "file-events": ["FILE_EVENT_VIEW", "CANARY_FILE_VIEW_EVENTS", "HONEYTOKEN_VIEW"],
+  threats: ["THREAT_VIEW"],
+  incidents: ["INCIDENT_VIEW"],
+  investigations: ["INVESTIGATION_VIEW"],
+  "ai-risk": ["AI_RISK_VIEW"],
+  "pre-encryption": ["PRE_ENCRYPTION_VIEW", "THREAT_VIEW"],
+  ransomware: ["THREAT_VIEW", "PRE_ENCRYPTION_VIEW"],
+  "adaptive-deception": ["ADAPTIVE_DECEPTION_VIEW", "CANARY_FILE_VIEW"],
+  deepfake: ["MEDIA_FORENSIC_VIEW", "AI_ANALYSIS_VIEW"],
+  notifications: ["NOTIFICATION_VIEW"],
+  "offline-sync": ["SYNC_VIEW"],
+  audit: ["AUDIT_LOG_VIEW"],
+  system: ["SYSTEM_HEALTH_VIEW"],
+  reports: ["REPORT_VIEW"],
+  settings: ["PROFILE_VIEW"],
+  "exposure-operations": ["ASSET_VIEW", "EXPOSURE_VIEW"],
+  "detection-operations": ["ALERT_VIEW", "DETECTION_VIEW"],
+  "governance-operations": ["ACCESS_CONTROL_VIEW", "COMPLIANCE_VIEW"],
+  "analysis-operations": ["MALWARE_ANALYSIS_VIEW", "ANALYSIS_VIEW"],
+  "response-automation": ["THREAT_ANALYSIS_VIEW", "INCIDENT_VIEW"],
+};
+
+export function getModuleAccessRequirements(moduleId?: string) {
+  if (!moduleId) return [] as string[];
+  return modulePermissionMap[moduleId] || [];
+}
+
+export function canAccessModule(moduleId: string | undefined, user?: { roles?: string[]; permissions?: string[]; organization_type?:string; user_type?:string } | null) {
+  if (!moduleId || !user) return false;
+  const isSuperAdmin = (user.roles || []).some((role) => role.toUpperCase() === "SUPER_ADMIN");
+  if (isSuperAdmin) return true;
+  const isOrganizationAdmin = (user.roles || []).some((role) => {
+    const normalized = role.toUpperCase();
+    return normalized.includes("ADMIN") || normalized === "MANAGER";
+  });
+  if (moduleId === "ransomware" && isOrganizationAdmin) return true;
+  if(moduleId==="investigations"&&!new Set(["POLICE","FORENSIC_LAB","GOVERNMENT","DEFENCE","CYBERSECURITY_PROVIDER"]).has(String(user.organization_type||"").toUpperCase()))return false;
+  const required = getModuleAccessRequirements(moduleId);
+  if (!required.length) return true;
+  const granted = new Set((user.permissions || []).map((permission) => permission.toUpperCase()));
+  return required.some((permission) => granted.has(permission));
+}
+
 export const navigationGroups = [
   { label: "Command", modules: ["dashboard", "threats", "incidents", "investigations", "intelligence"] },
-  { label: "Defense", modules: ["protected-files", "encryption", "honeytokens", "canary-files", "file-events", "ai-risk", "pre-encryption", "adaptive-deception", "deepfake"] },
+  { label: "Defense", modules: ["protected-files", "encryption", "honeytokens", "canary-files", "file-events", "ai-risk", "pre-encryption", "ransomware", "adaptive-deception", "deepfake"] },
   { label: "Identity & Access", modules: ["organizations", "users", "roles", "permissions", "user-roles", "role-permissions"] },
   { label: "Operations", modules: ["notifications", "offline-sync", "audit", "system", "reports", "settings"] },
 ] as const;

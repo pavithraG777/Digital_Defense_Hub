@@ -26,6 +26,7 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 
 func (r *Repository) AssignRoles(
 	ctx context.Context,
+	organizationID uuid.UUID,
 	userID uuid.UUID,
 	grantedBy *uuid.UUID,
 	req AssignRolesRequest,
@@ -46,10 +47,11 @@ func (r *Repository) AssignRoles(
 			SELECT 1
 			FROM users
 			WHERE id = $1
+			AND organization_id = $2
 			AND deleted_at IS NULL
 		)
 		`,
-		userID,
+		userID, organizationID,
 	).Scan(&userExists)
 	if err != nil {
 		return nil, err
@@ -74,10 +76,11 @@ func (r *Repository) AssignRoles(
 				SELECT 1
 				FROM roles
 				WHERE id = $1
+				AND organization_id = $2
 				AND deleted_at IS NULL
 			)
 			`,
-			roleID,
+			roleID, organizationID,
 		).Scan(&roleExists)
 		if err != nil {
 			return nil, err
@@ -226,8 +229,51 @@ func (r *Repository) AssignRoles(
 	return response, nil
 }
 
+// BulkAssignRoles validates the complete request before changing any mapping
+// and commits every assignment in one database transaction.
+func (r *Repository) BulkAssignRoles(ctx context.Context, organizationID uuid.UUID, grantedBy *uuid.UUID, req BulkAssignRolesRequest) (*BulkAssignRolesResponse, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	var userCount, roleCount int
+	if err = tx.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE id = ANY($1) AND organization_id=$2 AND deleted_at IS NULL`, req.UserIDs, organizationID).Scan(&userCount); err != nil {
+		return nil, err
+	}
+	if userCount != len(req.UserIDs) {
+		return nil, ErrUserNotFound
+	}
+	if err = tx.QueryRow(ctx, `SELECT COUNT(*) FROM roles WHERE id = ANY($1) AND organization_id=$2 AND deleted_at IS NULL`, req.RoleIDs, organizationID).Scan(&roleCount); err != nil {
+		return nil, err
+	}
+	if roleCount != len(req.RoleIDs) {
+		return nil, ErrRoleNotFound
+	}
+	result := &BulkAssignRolesResponse{Results: make([]*AssignRolesResponse, 0, len(req.UserIDs))}
+	for _, userID := range req.UserIDs {
+		userResult := &AssignRolesResponse{UserID: userID, AssignedRoles: []AssignedRoleItem{}}
+		for _, roleID := range req.RoleIDs {
+			var item AssignedRoleItem
+			err = tx.QueryRow(ctx, `INSERT INTO user_roles(user_id,role_id,granted_by,granted_at,expires_at,is_active) VALUES($1,$2,$3,CURRENT_TIMESTAMP,$4,TRUE) ON CONFLICT(user_id,role_id) DO UPDATE SET granted_by=EXCLUDED.granted_by,granted_at=CURRENT_TIMESTAMP,expires_at=EXCLUDED.expires_at,is_active=TRUE RETURNING id,user_id,role_id,granted_by,granted_at,expires_at,is_active`, userID, roleID, grantedBy, req.ExpiresAt).Scan(&item.ID, &item.UserID, &item.RoleID, &item.GrantedBy, &item.GrantedAt, &item.ExpiresAt, &item.IsActive)
+			if err != nil {
+				return nil, err
+			}
+			userResult.AssignedRoles = append(userResult.AssignedRoles, item)
+			userResult.AssignedCount++
+		}
+		result.Results = append(result.Results, userResult)
+		result.UsersUpdated++
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 func (r *Repository) ListUserRoles(
 	ctx context.Context,
+	organizationID uuid.UUID,
 	userID uuid.UUID,
 ) (*ListUserRolesResponse, error) {
 
@@ -240,10 +286,11 @@ func (r *Repository) ListUserRoles(
 			SELECT 1
 			FROM users
 			WHERE id = $1
+			AND organization_id = $2
 			AND deleted_at IS NULL
 		)
 		`,
-		userID,
+		userID, organizationID,
 	).Scan(&userExists)
 	if err != nil {
 		return nil, err
@@ -324,6 +371,7 @@ func (r *Repository) ListUserRoles(
 
 func (r *Repository) RemoveRole(
 	ctx context.Context,
+	organizationID uuid.UUID,
 	userID uuid.UUID,
 	roleID uuid.UUID,
 ) error {
@@ -336,10 +384,12 @@ func (r *Repository) RemoveRole(
 			is_active = FALSE
 		WHERE user_id = $1
 		AND role_id = $2
+		AND EXISTS (SELECT 1 FROM users u JOIN roles r ON r.id=$2 WHERE u.id=$1 AND u.organization_id=$3 AND r.organization_id=$3)
 		AND is_active = TRUE
 		`,
 		userID,
 		roleID,
+		organizationID,
 	)
 	if err != nil {
 		return err
@@ -354,6 +404,7 @@ func (r *Repository) RemoveRole(
 
 func (r *Repository) ReplaceRoles(
 	ctx context.Context,
+	organizationID uuid.UUID,
 	userID uuid.UUID,
 	grantedBy *uuid.UUID,
 	req ReplaceRolesRequest,
@@ -374,10 +425,11 @@ func (r *Repository) ReplaceRoles(
 			SELECT 1
 			FROM users
 			WHERE id = $1
+			AND organization_id = $2
 			AND deleted_at IS NULL
 		)
 		`,
-		userID,
+		userID, organizationID,
 	).Scan(&userExists)
 	if err != nil {
 		return nil, err
@@ -397,10 +449,11 @@ func (r *Repository) ReplaceRoles(
 				SELECT 1
 				FROM roles
 				WHERE id = $1
+				AND organization_id = $2
 				AND deleted_at IS NULL
 			)
 			`,
-			roleID,
+			roleID, organizationID,
 		).Scan(&roleExists)
 		if err != nil {
 			return nil, err

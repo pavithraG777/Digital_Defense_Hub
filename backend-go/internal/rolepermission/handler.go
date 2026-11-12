@@ -49,6 +49,11 @@ func getUUIDFromContext(
 }
 
 func (h *Handler) AssignPermissions(c *gin.Context) {
+	organizationID, ok := getUUIDFromContext(c, "organization_id")
+	if !ok {
+		response.Unauthorized(c, "Organization information is missing", nil)
+		return
+	}
 
 	roleID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -79,6 +84,7 @@ func (h *Handler) AssignPermissions(c *gin.Context) {
 
 	result, err := h.service.AssignPermissions(
 		c.Request.Context(),
+		organizationID,
 		roleID,
 		grantedBy,
 		req,
@@ -121,6 +127,11 @@ func (h *Handler) AssignPermissions(c *gin.Context) {
 }
 
 func (h *Handler) ListRolePermissions(c *gin.Context) {
+	organizationID, ok := getUUIDFromContext(c, "organization_id")
+	if !ok {
+		response.Unauthorized(c, "Organization information is missing", nil)
+		return
+	}
 
 	roleID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -134,6 +145,7 @@ func (h *Handler) ListRolePermissions(c *gin.Context) {
 
 	result, err := h.service.ListRolePermissions(
 		c.Request.Context(),
+		organizationID,
 		roleID,
 	)
 	if err != nil {
@@ -167,6 +179,11 @@ func (h *Handler) ListRolePermissions(c *gin.Context) {
 }
 
 func (h *Handler) RemovePermission(c *gin.Context) {
+	organizationID, ok := getUUIDFromContext(c, "organization_id")
+	if !ok {
+		response.Unauthorized(c, "Organization information is missing", nil)
+		return
+	}
 
 	roleID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -200,6 +217,7 @@ func (h *Handler) RemovePermission(c *gin.Context) {
 
 	err = h.service.RemovePermission(
 		c.Request.Context(),
+		organizationID,
 		roleID,
 		req.PermissionID,
 	)
@@ -221,6 +239,11 @@ func (h *Handler) RemovePermission(c *gin.Context) {
 }
 
 func (h *Handler) ReplacePermissions(c *gin.Context) {
+	organizationID, organizationOK := getUUIDFromContext(c, "organization_id")
+	if !organizationOK {
+		response.Unauthorized(c, "Organization information is missing", nil)
+		return
+	}
 
 	roleID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -265,6 +288,7 @@ func (h *Handler) ReplacePermissions(c *gin.Context) {
 
 	result, err := h.service.ReplacePermissions(
 		c.Request.Context(),
+		organizationID,
 		roleID,
 		&grantedBy,
 		req,

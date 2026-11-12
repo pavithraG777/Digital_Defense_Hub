@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"strings"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -9,11 +10,13 @@ import (
 
 func CORS() gin.HandlerFunc {
 	return cors.New(cors.Config{
-		AllowOrigins: []string{
-			"http://localhost:3000",
-			"http://localhost:5173",
-			"http://localhost:4173",
-			"https://pavithrag777.github.io",
+		AllowOriginFunc: func(origin string) bool {
+			return origin == "http://localhost:3000" ||
+				origin == "http://localhost:5173" ||
+				origin == "http://127.0.0.1:3000" ||
+				origin == "http://127.0.0.1:5173" ||
+				(strings.HasPrefix(origin, "https://") &&
+					strings.HasSuffix(origin, ".trycloudflare.com"))
 		},
 		AllowMethods: []string{
 			"GET",

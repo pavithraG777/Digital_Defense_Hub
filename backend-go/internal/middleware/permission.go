@@ -70,6 +70,34 @@ func RequireAnyPermission(
 	)
 }
 
+// RequireSuperAdmin protects platform-wide administration endpoints. A
+// permission grant alone must not allow a tenant administrator to cross the
+// organization boundary.
+func RequireSuperAdmin() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		value, exists := c.Get("roles")
+		if !exists {
+			abortWithError(c, http.StatusForbidden, "Super administrator access is required", nil)
+			return
+		}
+
+		roles, ok := value.([]string)
+		if !ok {
+			abortWithError(c, http.StatusForbidden, "Super administrator access is required", nil)
+			return
+		}
+
+		for _, role := range roles {
+			if strings.EqualFold(strings.TrimSpace(role), "SUPER_ADMIN") {
+				c.Next()
+				return
+			}
+		}
+
+		abortWithError(c, http.StatusForbidden, "Super administrator access is required", nil)
+	}
+}
+
 type anyPermissionChecker func(
 	c *gin.Context,
 	db *pgxpool.Pool,
@@ -180,8 +208,13 @@ func userHasPermission(
 	SELECT EXISTS (
 		SELECT 1
 		FROM user_roles AS ur
+		INNER JOIN users AS u
+			ON u.id = ur.user_id
+			AND u.deleted_at IS NULL
 		INNER JOIN roles AS r
 			ON r.id = ur.role_id
+			AND r.organization_id = u.organization_id
+			AND r.deleted_at IS NULL
 		LEFT JOIN role_permissions AS rp
 			ON rp.role_id = r.id
 			AND rp.is_active = TRUE
@@ -232,8 +265,13 @@ func userHasAnyPermission(
 	SELECT EXISTS (
 		SELECT 1
 		FROM user_roles AS ur
+		INNER JOIN users AS u
+			ON u.id = ur.user_id
+			AND u.deleted_at IS NULL
 		INNER JOIN roles AS r
 			ON r.id = ur.role_id
+			AND r.organization_id = u.organization_id
+			AND r.deleted_at IS NULL
 		LEFT JOIN role_permissions AS rp
 			ON rp.role_id = r.id
 			AND rp.is_active = TRUE

@@ -336,11 +336,30 @@ func EvaluateRuleAssessment(
 		)
 	}
 
-	if features.HasCanaryTrigger ||
-		features.HasHoneytokenAccess {
+	deceptionResourceTriggered :=
+		features.HasCanaryTrigger ||
+			features.HasHoneytokenAccess
+
+	// A deception-file interaction is a high-confidence indication that the
+	// resource was touched, but it is not, by itself, proof of ransomware.
+	// Promote it to the ransomware policy floor only when file-encryption
+	// behaviour independently corroborates the interaction. In particular,
+	// a single canary event can have a high per-minute rate because its window
+	// is short; rapid activity alone must therefore not make it critical.
+	strongRansomwareBehaviour :=
+		features.HasEncryptionActivity ||
+			features.HasHighEntropyWrites ||
+			features.HasMassModification ||
+			features.HasRansomwareExtension ||
+			features.HasExtensionChangeBurst ||
+			(features.HasRapidFileChanges &&
+				features.HasSuspiciousProcess)
+
+	if deceptionResourceTriggered &&
+		strongRansomwareBehaviour {
 		applyPolicyFloor(
 			82,
-			"A deception resource was accessed or modified.",
+			"A deception resource interaction was corroborated by ransomware-style file behaviour.",
 		)
 	}
 
@@ -424,8 +443,8 @@ func EvaluateRuleAssessment(
 	requiresEndpointIsolation :=
 		ruleScore >= CriticalRiskThreshold ||
 			features.HasEncryptionActivity ||
-			features.HasCanaryTrigger ||
-			features.HasHoneytokenAccess
+			(deceptionResourceTriggered &&
+				strongRansomwareBehaviour)
 
 	return &RuleAssessment{
 		RuleScore: ruleScore,

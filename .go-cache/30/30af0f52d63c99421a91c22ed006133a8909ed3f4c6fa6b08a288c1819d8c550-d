@@ -1,0 +1,6 @@
+./module.go
+./repository.go
+./service.go
+./baseline_contract_test.go
+./module_test.go
+./service_test.go

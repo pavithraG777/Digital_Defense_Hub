@@ -267,6 +267,8 @@ func (h *HoneytokenHandler) ListHoneytokens(
 	result, err := h.service.ListHoneytokens(
 		c.Request.Context(),
 		organizationID,
+		requestIncludesPlatformOwnedData(c),
+		requestIncludesTenantAdminOwnedData(c),
 		request,
 	)
 	if err != nil {
@@ -729,6 +731,45 @@ func (h *HoneytokenHandler) ValidateHoneytoken(
 		"Honeytoken validation completed",
 		result,
 	)
+}
+
+// ObserveHoneytoken receives real connector traffic without an interactive
+// user session. It intentionally returns the same accepted response for valid
+// and invalid values so the endpoint cannot be used as a token oracle.
+func (h *HoneytokenHandler) ObserveHoneytoken(c *gin.Context) {
+	if !h.isAvailable() {
+		c.Status(http.StatusAccepted)
+		return
+	}
+	honeytokenID, err := uuid.Parse(strings.TrimSpace(c.Param("id")))
+	if err != nil || honeytokenID == uuid.Nil {
+		c.Status(http.StatusAccepted)
+		return
+	}
+	var request ObserveHoneytokenRequest
+	if err = c.ShouldBindJSON(&request); err != nil {
+		c.Status(http.StatusAccepted)
+		return
+	}
+	err = h.service.ValidateExternalObservation(c.Request.Context(), honeytokenID, &request, c.ClientIP(), c.Request.UserAgent())
+	if err != nil {
+		c.Status(http.StatusAccepted)
+		return
+	}
+	c.Status(http.StatusAccepted)
+}
+
+// SimulateHoneytokenAccess uses an IANA documentation address so tests are
+// clearly separated from real connector observations while exercising the
+// same exact-value validator and incident pipeline.
+func (h *HoneytokenHandler) SimulateHoneytokenAccess(c *gin.Context) {
+	const simulatedExternalIP = "198.51.100.66"
+	ctx := context.WithValue(c.Request.Context(), honeytokenObservationSourceIPKey{}, simulatedExternalIP)
+	ctx = context.WithValue(ctx, honeytokenObservationUserAgentKey{}, "DDH-Honeytoken-Simulation/1.0")
+	ctx = context.WithValue(ctx, honeytokenObservationTargetContextKey{}, "SIMULATED_EXTERNAL_ACCESS")
+	ctx = context.WithValue(ctx, honeytokenObservationSimulationKey{}, true)
+	c.Request = c.Request.WithContext(ctx)
+	h.ValidateHoneytoken(c)
 }
 
 func handleDeployHoneytokenError(

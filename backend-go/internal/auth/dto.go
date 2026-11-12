@@ -44,6 +44,8 @@ type LoginResult struct {
 
 type UserResponse struct {
 	ID                 string   `json:"id"`
+	OrganizationID     string   `json:"organization_id"`
+	OrganizationType   string   `json:"organization_type"`
 	Username           string   `json:"username"`
 	OfficialEmail      string   `json:"official_email"`
 	DisplayName        string   `json:"display_name"`
@@ -52,6 +54,7 @@ type UserResponse struct {
 	MustChangePassword bool     `json:"must_change_password"`
 	MFAEnabled         bool     `json:"mfa_enabled"`
 	Roles              []string `json:"roles"`
+	Permissions        []string `json:"permissions"`
 }
 
 // ChangePasswordRequest contains the current password,

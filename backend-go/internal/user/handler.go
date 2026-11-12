@@ -280,6 +280,7 @@ func (h *Handler) ListUsers(c *gin.Context) {
 	users, err := h.service.ListUsers(
 		c.Request.Context(),
 		organizationID,
+		contextHasSuperAdminRole(c),
 		req,
 	)
 	if err != nil {
@@ -297,6 +298,23 @@ func (h *Handler) ListUsers(c *gin.Context) {
 		"Users retrieved successfully",
 		users,
 	)
+}
+
+func contextHasSuperAdminRole(c *gin.Context) bool {
+	value, ok := c.Get("roles")
+	if !ok {
+		return false
+	}
+	roles, ok := value.([]string)
+	if !ok {
+		return false
+	}
+	for _, role := range roles {
+		if strings.EqualFold(strings.TrimSpace(role), "SUPER_ADMIN") {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Handler) GetUserByID(c *gin.Context) {

@@ -11,6 +11,17 @@ type AssignRolesRequest struct {
 	ExpiresAt *time.Time  `json:"expires_at"`
 }
 
+type BulkAssignRolesRequest struct {
+	UserIDs   []uuid.UUID `json:"user_ids" binding:"required,min=1"`
+	RoleIDs   []uuid.UUID `json:"role_ids" binding:"required,min=1"`
+	ExpiresAt *time.Time  `json:"expires_at"`
+}
+
+type BulkAssignRolesResponse struct {
+	Results      []*AssignRolesResponse `json:"results"`
+	UsersUpdated int                    `json:"users_updated"`
+}
+
 type AssignedRoleItem struct {
 	ID        uuid.UUID  `json:"id"`
 	UserID    uuid.UUID  `json:"user_id"`

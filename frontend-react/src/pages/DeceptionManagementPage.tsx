@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import { AlertTriangle, Check, Copy, Eye, EyeOff, FileCheck2, KeyRound, Plus, RefreshCw, Rocket, Search, Upload, X } from "lucide-react";
+import { AlertTriangle, Check, Copy, Eye, EyeOff, FileCheck2, FilePenLine, FolderOpen, KeyRound, Plus, RefreshCw, Rocket, Search, ShieldAlert, Trash2, Upload, X } from "lucide-react";
 import { api } from "../lib/api";
 
 type Kind = "honeytoken" | "canary";
@@ -9,6 +9,14 @@ type EventRow = Row & { id: string; source_type: string; occurred_at: string };
 type InvestigationContext = { trigger_aggregate?: Row; threats?: Row[]; incidents?: Row[]; investigation_cases?: Row[] };
 
 const tokenTypes = ["USERNAME", "PASSWORD", "EMAIL_ADDRESS", "API_KEY", "ACCESS_TOKEN", "DATABASE_RECORD", "CLOUD_CREDENTIAL", "SSH_KEY", "DOCUMENT_DATA", "URL", "CUSTOM"];
+const tokenPlacement: Record<string,{label:string;context:string}> = {
+  USERNAME:{label:"Decoy sign-in identity",context:"AUTH_LOGIN"}, PASSWORD:{label:"Decoy password",context:"AUTH_LOGIN"},
+  EMAIL_ADDRESS:{label:"Decoy mailbox identity",context:"EMAIL_GATEWAY"}, API_KEY:{label:"API request credential",context:"API_GATEWAY"},
+  ACCESS_TOKEN:{label:"Bearer access token",context:"API_GATEWAY"}, DATABASE_RECORD:{label:"Decoy database record",context:"DATABASE_AUDIT"},
+  CLOUD_CREDENTIAL:{label:"Cloud access credential",context:"CLOUD_AUDIT"}, SSH_KEY:{label:"Decoy SSH credential",context:"SSH_AUTH"},
+  DOCUMENT_DATA:{label:"Tracked document value",context:"DOCUMENT_DLP"}, URL:{label:"Tracked decoy URL",context:"HTTP_BEACON"},
+  CUSTOM:{label:"Custom observed value",context:"CUSTOM_CONNECTOR"},
+};
 const canaryTypes = ["DOCUMENT", "SPREADSHEET", "PDF", "IMAGE", "ARCHIVE", "DATABASE_BACKUP", "CONFIGURATION", "SOURCE_CODE", "CREDENTIAL_FILE", "CUSTOM"];
 const classifications = ["PUBLIC", "INTERNAL", "CONFIDENTIAL", "RESTRICTED", "CRITICAL"];
 const honeytokenStatuses = ["DRAFT", "ACTIVE", "TRIGGERED", "INACTIVE", "EXPIRED", "REVOKED", "ARCHIVED"];
@@ -59,7 +67,7 @@ async function playHoneytokenAlert(context: AudioContext | null, tokenName: stri
     oscillator.stop(now + index * .25 + .18);
   });
   if ("Notification" in window && Notification.permission === "granted") {
-    new Notification("Deception alert triggered", { body: `${tokenName} recorded a new security event.` });
+    new Notification("Deception alert triggered", { body: `${tokenName} recorded a new security event.`, silent: true });
   }
   return true;
 }
@@ -166,6 +174,19 @@ export function DeceptionManagementPage({ kind }: { kind: Kind }) {
   const [demoResult, setDemoResult] = useState("");
   const [demoAudio, setDemoAudio] = useState<AudioContext | null>(null);
   const [soundReady, setSoundReady] = useState(false);
+  const playedEventIDs = useRef(new Set<string>());
+  const [localLaunchBusy, setLocalLaunchBusy] = useState<"OPEN"|"REVEAL"|"RENAME"|"DELETE"|"">("");
+
+  async function refreshSelectedCanary(canaryID: string) {
+    const [detail, history, investigationContext] = await Promise.all([
+      api.get<Row>(`/canary-files/${canaryID}`),
+      api.get<Row>(`/file-events?canary_file_id=${canaryID}&source_type=CANARY_FILE&page=1&page_size=100`),
+      api.get<InvestigationContext>(`/canary-files/${canaryID}/investigation`),
+    ]);
+    setSelected(detail);
+    setRelatedEvents((history.items as EventRow[]) || []);
+    setInvestigation(investigationContext);
+  }
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -202,7 +223,9 @@ export function DeceptionManagementPage({ kind }: { kind: Kind }) {
         .then(async history => {
           const incoming = (history.items as EventRow[]) || [];
           const known = new Set(relatedEvents.map(event => event.id));
-          if (incoming.some(event => !known.has(event.id)) && soundReady) {
+          const newEvent = incoming.find(event => !known.has(event.id) && !playedEventIDs.current.has(event.id));
+          if (newEvent && soundReady) {
+            playedEventIDs.current.add(newEvent.id);
             await playHoneytokenAlert(demoAudio, `Canary file ${labelOf(selected, kind)}`);
           }
           setRelatedEvents(incoming);
@@ -257,6 +280,38 @@ export function DeceptionManagementPage({ kind }: { kind: Kind }) {
     finally { setRotationBusy(false); }
   }
 
+  async function launchDeployedCanary(action: "OPEN" | "REVEAL" | "RENAME" | "DELETE") {
+    if (!selected || isToken) return;
+    let newFileName = "";
+    if (action === "RENAME") {
+      const requestedName = window.prompt("Enter the new filename, including its extension:", `renamed-${labelOf(selected, kind)}`);
+      if (requestedName == null) return;
+      newFileName = requestedName.trim();
+      if (!newFileName || /[\\/:*?\"<>|]/.test(newFileName)) { setError("Enter a valid Windows filename without path characters."); return; }
+    }
+    if (action === "DELETE" && !window.confirm(`Delete the monitored decoy ${labelOf(selected, kind)}? The original source file is not deleted. This will create a real DELETED/MISSING alert.`)) return;
+    const audioContext = demoAudio || browserAudioContext();
+    if (audioContext && !demoAudio) setDemoAudio(audioContext);
+    await audioContext?.resume().catch(() => undefined);
+    setSoundReady(audioContext?.state === "running");
+    setLocalLaunchBusy(action);
+    setError("");
+    try {
+      await api.post<Row>(`/canary-files/${idOf(selected)}/local/${action}`, action === "RENAME" ? { new_file_name: newFileName } : undefined);
+      const messages = {
+        OPEN: "AUTHORIZED LOCAL ACTION: The physical monitored copy was opened from this device.",
+        REVEAL: "AUTHORIZED LOCAL ACTION: Explorer selected the physical monitored copy on this device.",
+        RENAME: `AUTHORIZED LOCAL ACTION: The physical decoy was renamed to ${newFileName}. No external-IP denial event was created.`,
+        DELETE: "AUTHORIZED LOCAL ACTION: The physical deployed decoy was deleted. The original source file was not deleted.",
+      };
+      setDemoResult(messages[action]);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to open the monitored Canary copy.");
+    } finally {
+      setLocalLaunchBusy("");
+    }
+  }
+
   async function deactivate() {
     if (!selected || !window.confirm(`Deactivate ${labelOf(selected, kind)}? Monitoring will stop, but all existing evidence is retained.`)) return;
     setLifecycleBusy(true);
@@ -278,8 +333,9 @@ export function DeceptionManagementPage({ kind }: { kind: Kind }) {
     setDemoResult("");
     setError("");
     try {
-      const result = await api.post<Row>(`/honeytokens/${idOf(selected)}/validate`, { observed_value: demoValue });
+      const result = await api.post<Row>(`/honeytokens/${idOf(selected)}/simulate-access`, { observed_value: demoValue });
       if (result.valid === true && result.triggered === true) {
+        if (result.id) playedEventIDs.current.add(String(result.id));
         const sounded = await playHoneytokenAlert(audioContext, labelOf(selected, kind));
         window.dispatchEvent(new CustomEvent("ddh:deception-alert", { detail: {
           id: `honeytoken-${idOf(selected)}-${Date.now()}`,
@@ -290,7 +346,7 @@ export function DeceptionManagementPage({ kind }: { kind: Kind }) {
           severity: "CRITICAL",
         } }));
         setSoundReady(sounded);
-        setDemoResult(`Trigger recorded successfully. Access count is now ${Number(result.access_count || 0)}.${sounded ? " Alert sound played." : " Browser audio is blocked; click Test sound first."}`);
+        setDemoResult(`EXTERNAL TEST IP 198.51.100.66: matching protected value detected. Access count is now ${Number(result.access_count || 0)}.${sounded ? " Alert sound played." : " Browser audio is blocked; click Test sound first."}`);
         setDemoValue("");
         const detail = await api.get<Row>(`/honeytokens/${idOf(selected)}`);
         setSelected(detail);
@@ -300,6 +356,68 @@ export function DeceptionManagementPage({ kind }: { kind: Kind }) {
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Honeytoken demo trigger failed.");
+    } finally {
+      setDemoBusy(false);
+    }
+  }
+
+  async function simulateCanaryEvent(eventType: "OPENED" | "MODIFIED" | "RENAMED" | "DELETED") {
+    if (!selected || isToken) return;
+    let attemptedName = "";
+    if (eventType === "RENAMED") {
+      const requestedName = window.prompt("Enter the filename the external device is attempting to use:", `stolen-${labelOf(selected, kind)}`);
+      if (requestedName == null) return;
+      attemptedName = requestedName.trim();
+      if (!attemptedName || /[\\/:*?\"<>|]/.test(attemptedName)) { setError("Enter a valid Windows filename without path characters."); return; }
+    }
+    if (eventType === "DELETED" && !window.confirm("Simulate an external device attempting to delete this Canary? The physical file will remain unchanged.")) return;
+    const audioContext = demoAudio || browserAudioContext();
+    if (audioContext && !demoAudio) setDemoAudio(audioContext);
+    await audioContext?.resume().catch(() => undefined);
+    setDemoBusy(true);
+    setDemoResult("");
+    setError("");
+    try {
+      const result = await api.post<Row>(`/file-events/canary/${idOf(selected)}/simulate/${eventType}`);
+      const simulatedIP = str(result.simulated_source_ip);
+      const event = (result.event as Row) || {};
+      if (event.id) playedEventIDs.current.add(String(event.id));
+      const sounded = await playHoneytokenAlert(audioContext, `Canary file ${labelOf(selected, kind)}`);
+      window.dispatchEvent(new CustomEvent("ddh:deception-alert", { detail: {
+        id: `canary-simulation-${idOf(selected)}-${Date.now()}`,
+        source_type: "CANARY_FILE",
+        event_type: eventType,
+        file_name: labelOf(selected, kind),
+        device_name: `Unrecognized device · ${simulatedIP}`,
+        severity: str(event.severity || "CRITICAL"),
+      } }));
+      setSoundReady(sounded);
+      const operation = { OPENED: "open", MODIFIED: "edit", RENAMED: "rename", DELETED: "delete" }[eventType];
+      const target = eventType === "RENAMED" ? ` as ${attemptedName}` : "";
+      setDemoResult(`ACCESS DENIED: ${simulatedIP} attempted to ${operation} this file${target}. The physical file was not changed.${sounded ? " Alert sound played." : ""}`);
+      await refreshSelectedCanary(idOf(selected));
+      await load(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Canary event simulation failed.");
+    } finally {
+      setDemoBusy(false);
+    }
+  }
+
+  async function beginCanaryEditTest() {
+    if (!selected || isToken) return;
+    const audioContext = demoAudio || browserAudioContext();
+    if (audioContext && !demoAudio) setDemoAudio(audioContext);
+    await audioContext?.resume().catch(() => undefined);
+    setSoundReady(audioContext?.state === "running");
+    setDemoResult("");
+    setError("");
+    setDemoBusy(true);
+    try {
+      await api.post<Row>(`/canary-files/${idOf(selected)}/local/OPEN`);
+      setDemoResult("EDIT TEST ARMED: the monitored file is open. No alert yet—edit and save it to trigger the real watcher and 5-second siren.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to open the monitored Canary copy.");
     } finally {
       setDemoBusy(false);
     }
@@ -324,7 +442,7 @@ export function DeceptionManagementPage({ kind }: { kind: Kind }) {
     <div className="deception-scope-guide" aria-label={`${isToken ? "Honeytoken" : "Canary file"} operating model`}>
       {isToken ? <>
         <KeyRound size={20}/>
-        <div><strong>Honeytoken = a decoy value, not a file</strong><span><b>Target system</b> is the real logical service where the decoy will appear, such as Payroll API, Finance Vault or a decoy database record. Create generates the value; an authorized operator must place it there, then use <b>Deploy and arm</b> to record that placement.</span></div>
+        <div><strong>Honeytoken = a decoy value, not a real customer secret</strong><span>Create generates and arms every supported type in one step. Real detection occurs when a registered connector forwards an observed value; DDH records the request source IP.</span></div>
       </> : <>
         <FileCheck2 size={20}/>
         <div><strong>Canary File = a dot-prefixed monitored copy</strong><span>By default, create or import deploys a sibling-style copy such as report.pdf → .report.pdf into the approved CanaryAlerts folder and arms monitoring. The original selected file is never monitored or modified.</span></div>
@@ -337,7 +455,7 @@ export function DeceptionManagementPage({ kind }: { kind: Kind }) {
     </article>
     {selected && ["ACTIVE","TRIGGERED","TAMPERED","MISSING"].includes(str(selected.status)) && <button type="button" className="deception-lifecycle-control" disabled={lifecycleBusy} onClick={()=>void deactivate()}>{lifecycleBusy ? "Deactivating…" : "Deactivate monitoring"}</button>}
     {selected && (isToken ? ["ACTIVE","TRIGGERED"].includes(str(selected.status)) : Boolean(selected.deployed_at)) && <button type="button" className={`secondary honeytoken-sound-test${soundReady ? " sound-ready" : ""}`} onClick={()=>void testHoneytokenSound()}>{soundReady ? "Sound ready" : "Test alert sound"}</button>}
-    {selected && <><button className="drawer-backdrop" aria-label="Close secured record" onClick={()=>{setSelected(null);setInvestigation(null);}}/><aside className="deception-drawer"><div className="drawer-heading"><div><span className="eyebrow">SECURED RECORD</span><h2>{labelOf(selected,kind)}</h2></div><button onClick={()=>{setSelected(null);setInvestigation(null);}}><X size={18}/></button></div><div className="detail-summary"><Kpi label="Total accesses" value={Number(selected.access_count||0)}/><Kpi label="Loaded source events" value={selectedEvents.length}/></div>{(!isToken&&!selected.deployed_at||isToken&&["DRAFT","GENERATED"].includes(str(selected.status)))&&<div className="deployment-notice"><AlertTriangle size={17}/><div><strong>Not armed yet</strong><span>This record exists in the database, but monitoring starts only after deployment.</span></div><button className="primary with-icon" onClick={()=>setDeploying(selected)}><Rocket size={15}/>Deploy and arm</button></div>}{isToken&&["ACTIVE","TRIGGERED"].includes(str(selected.status))&&<form className="honeytoken-demo-panel" onSubmit={simulateHoneytokenTrigger}><div className="honeytoken-demo-heading"><KeyRound size={18}/><div><strong>Browser demo trigger</strong><span>Paste the one-time generated value to simulate an authorized monitoring agent observing this armed Honeytoken.</span></div></div><label>Observed Honeytoken value<div className="honeytoken-demo-control"><input required autoComplete="off" type={demoVisible?"text":"password"} value={demoValue} onChange={event=>setDemoValue(event.target.value)} placeholder="Paste the copied one-time value"/><button className="icon-button" type="button" aria-label={demoVisible?"Hide observed value":"Show observed value"} onClick={()=>setDemoVisible(value=>!value)}>{demoVisible?<EyeOff size={17}/>:<Eye size={17}/>}</button><button className="primary" type="submit" disabled={demoBusy||!demoValue.trim()}>{demoBusy?"Triggering…":"Simulate trigger"}</button></div></label>{demoResult&&<p className={demoResult.startsWith("Trigger recorded")?"demo-result success":"demo-result"}>{demoResult}</p>}</form>}{!isToken&&Boolean(selected.deployed_at)&&<div className="deployment-notice armed"><FileCheck2 size={17}/><div><strong>Monitoring CanaryAlerts / {labelOf(selected,kind)}</strong><span>Edit, rename, or delete this deployed copy. The original file selected during import is not monitored.</span></div></div>}{!isToken&&<section className="canary-health-panel"><div><h3>Canary health</h3><p>Latest verified health state: <strong>{str(canaryHealth?.latest_health_check ? (canaryHealth.latest_health_check as Row).health_status : canaryHealth?.status)}</strong></p><p className="muted">{canaryHealth?.latest_health_check ? date((canaryHealth.latest_health_check as Row).checked_at) : "No completed health check is available."}</p></div><div><button className="secondary" disabled={healthBusy} onClick={()=>void checkCanaryHealth()}>{healthBusy?"Checking…":"Verify integrity"}</button><button className="primary" disabled={rotationBusy} onClick={()=>void rotateCanary()}>{rotationBusy?"Rotating…":"Rotate"}</button></div></section>}<InvestigationSummary value={investigation}/><SafeDetailSections row={selected} sections={detailSections}/><h3>{isToken ? "Honeytoken validation history" : "Canary filesystem history"}</h3><EventList events={selectedEvents}/></aside></>}
+    {selected && <><button className="drawer-backdrop" aria-label="Close secured record" onClick={()=>{setSelected(null);setInvestigation(null);}}/><aside className="deception-drawer"><div className="drawer-heading"><div><span className="eyebrow">SECURED RECORD</span><h2>{labelOf(selected,kind)}</h2></div><button onClick={()=>{setSelected(null);setInvestigation(null);}}><X size={18}/></button></div><div className="detail-summary"><Kpi label="Total accesses" value={Number(selected.access_count||0)}/><Kpi label="Loaded source events" value={selectedEvents.length}/></div>{(!isToken&&!selected.deployed_at||isToken&&["DRAFT","GENERATED"].includes(str(selected.status)))&&<div className="deployment-notice"><AlertTriangle size={17}/><div><strong>Not armed yet</strong><span>This record exists in the database, but monitoring starts only after deployment.</span></div><button className="primary with-icon" onClick={()=>setDeploying(selected)}><Rocket size={15}/>Deploy and arm</button></div>}{isToken&&["ACTIVE","TRIGGERED"].includes(str(selected.status))&&<form className="honeytoken-demo-panel" onSubmit={simulateHoneytokenTrigger}><div className="honeytoken-demo-heading"><KeyRound size={18}/><div><strong>Browser demo trigger</strong><span>Paste the one-time generated value to simulate an authorized monitoring agent observing this armed Honeytoken.</span></div></div><label>Observed Honeytoken value<div className="honeytoken-demo-control"><input required autoComplete="off" type={demoVisible?"text":"password"} value={demoValue} onChange={event=>setDemoValue(event.target.value)} placeholder="Paste the copied one-time value"/><button className="icon-button" type="button" aria-label={demoVisible?"Hide observed value":"Show observed value"} onClick={()=>setDemoVisible(value=>!value)}>{demoVisible?<EyeOff size={17}/>:<Eye size={17}/>}</button><button className="primary" type="submit" disabled={demoBusy||!demoValue.trim()}>{demoBusy?"Triggering…":"Simulate trigger"}</button></div></label>{demoResult&&<p className={demoResult.startsWith("Trigger recorded")?"demo-result success":"demo-result"}>{demoResult}</p>}</form>}{!isToken&&Boolean(selected.deployed_at)&&<section className="honeytoken-demo-panel canary-live-test-panel"><div className="honeytoken-demo-heading"><FileCheck2 size={18}/><div><strong>Authorized local owner actions</strong><span>SAME DEVICE / LOCAL OWNER: these buttons physically change the deployed decoy. They do not represent a different-IP attack.</span></div></div><div className="canary-live-actions"><button className="primary with-icon" type="button" disabled={Boolean(localLaunchBusy)} onClick={()=>void launchDeployedCanary("OPEN")}><FilePenLine size={16}/>{localLaunchBusy==="OPEN"?"Opening…":"REAL: Open file"}</button><button className="secondary with-icon" type="button" disabled={Boolean(localLaunchBusy)} onClick={()=>void launchDeployedCanary("REVEAL")}><FolderOpen size={16}/>{localLaunchBusy==="REVEAL"?"Opening…":"REAL: Show in folder"}</button><button className="secondary with-icon" type="button" disabled={Boolean(localLaunchBusy)} onClick={()=>void launchDeployedCanary("RENAME")}><RefreshCw size={16}/>{localLaunchBusy==="RENAME"?"Renaming…":"REAL: Authorized rename"}</button><button className="danger with-icon" type="button" disabled={Boolean(localLaunchBusy)} onClick={()=>void launchDeployedCanary("DELETE")}><Trash2 size={16}/>{localLaunchBusy==="DELETE"?"Deleting…":"REAL: Authorized delete"}</button></div></section>}{!isToken&&<section className="honeytoken-demo-panel canary-simulation-panel"><div className="honeytoken-demo-heading"><ShieldAlert size={18}/><div><strong>External-IP denied simulations</strong><span>EDIT TEST opens the monitored copy and alerts only after save. External Rename/Delete attempts keep the physical file unchanged and return ACCESS DENIED.</span></div></div><div className="canary-simulation-actions"><button className="secondary with-icon" type="button" disabled={demoBusy} onClick={()=>void simulateCanaryEvent("OPENED")}><Eye size={16}/>DENY: Open attempt</button><button className="secondary with-icon" type="button" disabled={demoBusy} onClick={()=>void beginCanaryEditTest()}><FilePenLine size={16}/>TEST: Open then edit</button><button className="secondary with-icon" type="button" disabled={demoBusy} onClick={()=>void simulateCanaryEvent("RENAMED")}><RefreshCw size={16}/>DENY: Rename with name</button><button className="danger with-icon" type="button" disabled={demoBusy} onClick={()=>void simulateCanaryEvent("DELETED")}><Trash2 size={16}/>DENY: Delete attempt</button></div>{demoBusy&&<p className="demo-result">Recording simulated event…</p>}{demoResult&&<p className="demo-result success">{demoResult}</p>}</section>}{!isToken&&Boolean(selected.deployed_at)&&<div className="deployment-notice armed"><FileCheck2 size={17}/><div><strong>Monitoring CanaryAlerts / {labelOf(selected,kind)}</strong><span>Edit, rename, or delete this deployed copy. The original file selected during import is not monitored.</span></div></div>}{!isToken&&<section className="canary-health-panel"><div><h3>Canary health</h3><p>Latest verified health state: <strong>{str(canaryHealth?.latest_health_check ? (canaryHealth.latest_health_check as Row).health_status : canaryHealth?.status)}</strong></p><p className="muted">{canaryHealth?.latest_health_check ? date((canaryHealth.latest_health_check as Row).checked_at) : "No completed health check is available."}</p></div><div><button className="secondary" disabled={healthBusy} onClick={()=>void checkCanaryHealth()}>{healthBusy?"Checking…":"Verify integrity"}</button><button className="primary" disabled={rotationBusy} onClick={()=>void rotateCanary()}>{rotationBusy?"Rotating…":"Rotate"}</button></div></section>}<InvestigationSummary value={investigation}/><SafeDetailSections row={selected} sections={detailSections}/><h3>{isToken ? "Honeytoken validation history" : "Canary filesystem history"}</h3><EventList events={selectedEvents}/></aside></>}
     {createOpen && <CreateDialog kind={kind} honeytokens={availableTokens} onClose={()=>setCreateOpen(false)} onCreated={()=>{setCreateOpen(false);void load();}}/>}
     {deploying && <DeployDialog kind={kind} row={deploying} onClose={()=>setDeploying(null)} onDeployed={()=>{setDeploying(null);setSelected(null);void load();}}/>}
   </section>;
@@ -350,7 +468,14 @@ function SafeDetailSections({row,sections}:{row:Row;sections:DetailSection[]}) {
     <dl className="detail-grid">{section.fields.map(field=><div key={field.key}><dt>{field.label}</dt><dd className={field.key.includes("hash") || field.key.endsWith("_id") || field.key === "id" ? "machine-value" : undefined}>{detailValue(field.key,row[field.key])}</dd></div>)}</dl>
   </section>)}</div>;
 }
-function EventList({events}:{events:EventRow[]}) { return <div className="event-list">{events.length?events.map(event=><article key={event.id}><span className={`severity ${str(event.severity).toLowerCase()}`}>{str(event.severity)}</span><div><strong>{str(event.event_type)} · {str(event.file_name)}</strong><small>{str(event.system_username)} · {str(event.device_name)} · {str(event.process_name)}</small></div><time>{date(event.occurred_at)}</time></article>):<div className="empty-inline">No matching event has been recorded.</div>}</div>; }
+function eventMetadata(event: EventRow): Row {
+  if (event.metadata && typeof event.metadata === "object") return event.metadata as Row;
+  if (typeof event.metadata === "string") {
+    try { return JSON.parse(event.metadata) as Row; } catch { return {}; }
+  }
+  return {};
+}
+function EventList({events}:{events:EventRow[]}) { return <div className="event-list">{events.length?events.map(event=>{const metadata=eventMetadata(event);const simulated=metadata.simulation===true;return <article key={event.id}><span className={`severity ${str(event.severity).toLowerCase()}`}>{str(event.severity)}</span><div><strong>{str(event.event_type)} · {str(event.file_name)}{simulated?" · SIMULATION":""}</strong><small>{str(event.system_username)} · {str(event.device_name)} · {str(event.process_name)}{simulated?` · IP ${str(metadata.simulated_source_ip)} · ACCESS DENIED`:""}</small></div><time>{date(event.occurred_at)}</time></article>}):<div className="empty-inline">No matching event has been recorded.</div>}</div>; }
 function InvestigationSummary({value}:{value:InvestigationContext|null}) { const aggregate=value?.trigger_aggregate||{}; return <section className="deception-investigation"><h3>Investigation context</h3><div className="detail-summary"><Kpi label="Triggers" value={Number(aggregate.total||0)}/><Kpi label="Suspicious" value={Number(aggregate.suspicious||0)}/><Kpi label="Critical" value={Number(aggregate.critical||0)}/></div><LinkedRecords title="Linked threats" rows={value?.threats||[]} code="threat_code" timestamp="last_detected_at"/><LinkedRecords title="Linked incidents" rows={value?.incidents||[]} code="incident_code" timestamp="updated_at"/><LinkedRecords title="Linked investigation cases" rows={value?.investigation_cases||[]} code="case_number" timestamp="updated_at"/></section>; }
 function LinkedRecords({title,rows,code,timestamp}:{title:string;rows:Row[];code:string;timestamp:string}) { return <div className="linked-records"><h4>{title} <small>{rows.length}</small></h4>{rows.length?<div>{rows.map(row=><article key={idOf(row)}><strong>{str(row[code])}</strong><span>{str(row.title)}</span><small>{str(row.severity||row.priority)} · {str(row.status)} · {date(row[timestamp])}</small></article>)}</div>:<p>No linked records yet.</p>}</div>; }
 
@@ -362,8 +487,10 @@ function CreateDialog({kind,honeytokens,onClose,onCreated}:{kind:Kind;honeytoken
     canary_type: "DOCUMENT",
     contains_honeytoken: false,
     deploy_immediately: true,
+    target_system: `Digital Defense Hub @ ${window.location.hostname}`,
   });
   const [creationMode, setCreationMode] = useState<"GENERATE"|"IMPORT">("GENERATE");
+  const [tokenValueMode, setTokenValueMode] = useState<"EXISTING"|"GENERATE">("EXISTING");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [error, setError] = useState("");
   const [created, setCreated] = useState<Row|null>(null);
@@ -405,7 +532,14 @@ function CreateDialog({kind,honeytokens,onClose,onCreated}:{kind:Kind;honeytoken
           description: form.description || undefined,
           target_system: form.target_system || undefined,
           classification: form.classification,
+          protected_value: tokenValueMode === "EXISTING" ? form.protected_value : undefined,
         });
+        const placement = tokenPlacement[String(form.honeytoken_type)] || tokenPlacement.CUSTOM;
+        const deployment = await api.post<Row>(`/honeytokens/${idOf(result)}/deploy`, {
+          deployment_location: `DDH_COLLECTOR:${placement.context}`,
+          target_system: form.target_system,
+        });
+        result = {...result, ...deployment, generated_value: result.generated_value};
       } else if (creationMode === "IMPORT") {
         if (!selectedFile) throw new Error("Choose the existing file that DDH should copy into secured staging.");
         const originalPath = String(form.original_file_path || "").trim();
@@ -464,11 +598,12 @@ function CreateDialog({kind,honeytokens,onClose,onCreated}:{kind:Kind;honeytoken
       </div>
       {error && <div className="alert alert-error"><AlertTriangle size={16}/>{error}</div>}
       {created ? <div className="created-secret">
-        <div className="staging-status"><strong>{!isToken && Boolean(form.deploy_immediately) ? "Deployed and monitoring" : "Staged securely — not monitored yet"}</strong><span>{isToken ? "The backend created a DRAFT Honeytoken record. Place the one-time material in its approved logical target, then record that placement with Deploy & Arm." : Boolean(form.deploy_immediately) ? "DDH created a dot-prefixed monitored copy (for example, report.pdf → .report.pdf) in the CanaryAlerts folder. Editing, renaming or deleting that copy produces an alert." : "The backend created a DRAFT secured Canary copy in tenant staging. Select Deploy & Arm to copy it into an approved monitored directory."}</span></div>
+        <div className="staging-status"><strong>{isToken || Boolean(form.deploy_immediately) ? "Armed and monitoring" : "Staged securely — not monitored yet"}</strong><span>{isToken ? `The ${String(form.honeytoken_type).replaceAll("_"," ")} decoy is active. Place the generated decoy in the named target; a registered connector must forward an observed use to the collector. The request source IP is captured by the backend.` : Boolean(form.deploy_immediately) ? "DDH created a dot-prefixed monitored copy (for example, report.pdf → .report.pdf) in the CanaryAlerts folder. Editing, renaming or deleting that copy produces an alert." : "The backend created a DRAFT secured Canary copy in tenant staging. Select Deploy & Arm to copy it into an approved monitored directory."}</span></div>
         {oneTimeSecret && <section className="one-time-secret" aria-label="One-time generated Honeytoken material">
-          <div><strong>One-time generated value</strong><span>Shown only in this creation response. Store it in the approved target before closing this dialog.</span></div>
+          <div><strong>Generated decoy — not your real secret</strong><span>Shown once. Place this fake value in the target; never paste a real customer password or production key here.</span></div>
           <div className="secret-control"><input aria-label="Generated Honeytoken value" readOnly type={secretVisible ? "text" : "password"} value={oneTimeSecret}/><button className="icon-button" type="button" aria-label={secretVisible ? "Hide generated value" : "Reveal generated value"} onClick={()=>setSecretVisible(value=>!value)}>{secretVisible?<EyeOff size={17}/>:<Eye size={17}/>}</button><button className="secondary with-icon" type="button" onClick={()=>void copyOneTimeSecret()}>{secretCopied?<Check size={16}/>:<Copy size={16}/>} {secretCopied?"Copied":"Copy"}</button></div>
         </section>}
+        {isToken && <section className="canary-source-note"><strong>Real observation endpoint</strong><p className="machine-value">POST /api/v1/honeytoken-observations/{idOf(created)}</p><span>Connector JSON: {`{"observed_value":"<value-seen>","target_context":"${tokenPlacement[String(form.honeytoken_type)]?.context || "CUSTOM_CONNECTOR"}"}`}. A matching active decoy creates an event, threat and incident. Invalid values receive the same HTTP response and do not reveal token validity.</span></section>}
         <div className="creation-metadata">{creationFields.map(field=><div key={field.key}><span>{field.label}</span><strong className={field.key.includes("hash") || field.key.endsWith("_id") || field.key === "id" ? "machine-value" : undefined}>{detailValue(field.key,created[field.key])}</strong></div>)}</div>
         <button className="primary" onClick={onCreated}>View inventory</button>
       </div> : <form onSubmit={submit}>
@@ -487,9 +622,12 @@ function CreateDialog({kind,honeytokens,onClose,onCreated}:{kind:Kind;honeytoken
         </div>}
         <div className="form-grid">
           {isToken ? <>
+            <div className="field-wide canary-mode-switch" role="group" aria-label="Honeytoken value source"><button type="button" className={tokenValueMode === "EXISTING" ? "active" : ""} onClick={()=>setTokenValueMode("EXISTING")}><strong>Monitor my value</strong><span>Fingerprint an existing password, key or token</span></button><button type="button" className={tokenValueMode === "GENERATE" ? "active" : ""} onClick={()=>setTokenValueMode("GENERATE")}><strong>Generate decoy</strong><span>Create a new fake value</span></button></div>
             <label>Honeytoken name *<input required onChange={e=>update("honeytoken_name",e.target.value)}/></label>
             <label>Type *<select value={String(form.honeytoken_type)} onChange={e=>update("honeytoken_type",e.target.value)}>{tokenTypes.map(v=><option key={v}>{v}</option>)}</select></label>
-            <label>Target system<input onChange={e=>update("target_system",e.target.value)} placeholder="Example: Payroll API or Finance Vault"/><small>Name the logical application, service, vault or database that will contain the decoy. This is not a laptop name and not a file path. A Honeytoken is a decoy value, so DDH cannot physically insert it into an external API or vault without a separately configured integration.</small></label>
+            {tokenValueMode === "EXISTING" && <label className="field-wide">Value to monitor *<input required minLength={4} maxLength={8192} type="password" autoComplete="new-password" value={String(form.protected_value||"")} onChange={e=>update("protected_value",e.target.value)} placeholder={`Enter the ${String(form.honeytoken_type).replaceAll("_"," ").toLowerCase()} to monitor`}/><small>Sent once over the authenticated connection, encrypted with the organization key and fingerprinted. It is never returned by list or detail APIs. Its use is detectable only when DDH or a registered connector observes the attempt.</small></label>}
+            <label>Detected monitoring system<input readOnly value={String(form.target_system)}/><small>DDH detected the current platform host automatically. External systems must be registered as connectors before they can forward real usage.</small></label>
+            <label>Monitoring adapter<input readOnly value={tokenPlacement[String(form.honeytoken_type)]?.label || tokenPlacement.CUSTOM.label}/><small>{tokenPlacement[String(form.honeytoken_type)]?.context || tokenPlacement.CUSTOM.context} · automatically armed after creation</small></label>
             <label>Classification *<select value={String(form.classification)} onChange={e=>update("classification",e.target.value)}>{classifications.map(v=><option key={v}>{v}</option>)}</select></label>
           </> : creationMode === "GENERATE" ? <>
             <label>Decoy file name *<input required onChange={e=>update("file_name",e.target.value)} placeholder="Finance_Report_2026"/><small>Do not enter an extension; selected type produces {generatedExtension}.</small></label>
@@ -511,7 +649,7 @@ function CreateDialog({kind,honeytokens,onClose,onCreated}:{kind:Kind;honeytoken
         </div>
         <div className="modal-actions">
           <button className="secondary" type="button" onClick={onClose}>Cancel</button>
-          <button className="primary" disabled={busy} type="submit">{busy ? "Staging…" : isToken ? "Generate securely" : creationMode === "IMPORT" ? "Upload secured copy" : "Generate decoy"}</button>
+          <button className="primary" disabled={busy} type="submit">{busy ? "Creating and arming…" : isToken ? "Generate and arm" : creationMode === "IMPORT" ? "Upload secured copy" : "Generate decoy"}</button>
         </div>
       </form>}
     </section>

@@ -3,8 +3,9 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  base: process.env.VITE_BASE_PATH || "/Digital_Defense_Hub/",
   server: {
+    // Quick tunnels receive a new random hostname on each start.
+    allowedHosts: true,
     proxy: {
       "/api/v1": {
         target: "http://localhost:8080",

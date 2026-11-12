@@ -362,9 +362,12 @@ func Load() (*Config, error) {
 
 	setConfigurationDefaults()
 
-	// Local development may provide .env; hosted deployments use injected
-	// environment variables and do not need a file on disk.
-	_ = viper.ReadInConfig()
+	if err := viper.ReadInConfig(); err != nil {
+		return nil, fmt.Errorf(
+			"unable to load .env file: %w",
+			err,
+		)
+	}
 
 	accessTokenDuration, err :=
 		loadConfigurationDuration(

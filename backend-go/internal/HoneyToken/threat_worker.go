@@ -43,6 +43,7 @@ type ThreatWorker struct {
 	logger                        *zap.Logger
 	queue                         chan ThreatSignal
 	incidentAutomation            *IncidentAutomationService
+	forensicReportGenerator       ForensicReportGenerator
 	attackStoryPublisher          AttackStoryPublisher
 	securityNotificationPublisher SecurityNotificationPublisher
 
@@ -58,6 +59,17 @@ type ThreatWorker struct {
 	processedCount atomic.Uint64
 	failedCount    atomic.Uint64
 	droppedCount   atomic.Uint64
+}
+
+// ForensicReportGenerator creates a report for an already-created incident.
+// It is kept as an interface so the Threat Engine does not depend on a
+// particular forensic implementation.
+type ForensicReportGenerator interface {
+	GenerateForensicReport(
+		ctx context.Context,
+		incident *IncidentResponse,
+		threat *ThreatResponse,
+	) error
 }
 
 func NewThreatWorker(
@@ -119,6 +131,21 @@ func (w *ThreatWorker) SetIncidentAutomationService(
 	defer w.mu.Unlock()
 
 	w.incidentAutomation = service
+}
+
+// SetForensicReportGenerator connects incident automation to forensic report
+// generation.
+func (w *ThreatWorker) SetForensicReportGenerator(
+	generator ForensicReportGenerator,
+) {
+	if w == nil {
+		return
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.forensicReportGenerator = generator
 }
 
 // SetSecurityNotificationPublisher connects the Threat Engine worker to the
@@ -738,6 +765,39 @@ func (w *ThreatWorker) processIncidentAutomation(
 			zap.Error(notificationErr),
 		)
 	}
+
+	if reportErr := w.generateForensicReport(
+		automationContext,
+		result.Incident,
+		threat,
+	); reportErr != nil {
+		w.logger.Error(
+			"Automatic forensic report generation failed",
+			zap.Int("worker_id", workerID),
+			zap.String("threat_id", threat.ID),
+			zap.String("incident_id", result.Incident.ID),
+			zap.Error(reportErr),
+		)
+	}
+}
+
+func (w *ThreatWorker) generateForensicReport(
+	ctx context.Context,
+	incident *IncidentResponse,
+	threat *ThreatResponse,
+) error {
+	if w == nil || incident == nil || threat == nil {
+		return nil
+	}
+
+	w.mu.RLock()
+	generator := w.forensicReportGenerator
+	w.mu.RUnlock()
+	if generator == nil {
+		return nil
+	}
+
+	return generator.GenerateForensicReport(ctx, incident, threat)
 }
 
 func (w *ThreatWorker) incidentAutomationService() *IncidentAutomationService {

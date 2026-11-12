@@ -19,11 +19,13 @@ import (
 )
 
 var (
-	ErrOrganizationCodeExists   = errors.New("organization code already exists")
-	ErrOrganizationCodeRequired = errors.New("organization code is required")
-	ErrInvalidRegistration      = errors.New("organization registration details are incomplete")
-	ErrOrganizationNotFound     = errors.New("organization not found")
-	ErrOrganizationNotPending   = errors.New("organization is not pending approval")
+	ErrOrganizationCodeExists      = errors.New("organization code already exists")
+	ErrOrganizationCodeRequired    = errors.New("organization code is required")
+	ErrInvalidRegistration         = errors.New("organization registration details are incomplete")
+	ErrOrganizationNotFound        = errors.New("organization not found")
+	ErrOrganizationNotPending      = errors.New("organization is not pending approval")
+	ErrAdminUsernameExists         = errors.New("organization admin username is already in use")
+	ErrAdminEmailExists            = errors.New("organization admin email is already in use")
 )
 
 type CreateRequest struct {
@@ -97,6 +99,23 @@ func validatePrimaryAdminRequest(request CreateRequest) error {
 	for field, value := range required {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("%w: %s is required", ErrInvalidRegistration, field)
+		}
+	}
+	return nil
+}
+
+func validateOrganizationAdminUniqueness(request CreateRequest, existingUsernames map[string]struct{}, existingEmails map[string]struct{}) error {
+	username := strings.ToLower(strings.TrimSpace(request.AdminUsername))
+	email := strings.ToLower(strings.TrimSpace(request.AdminEmail))
+
+	if username != "" {
+		if _, exists := existingUsernames[username]; exists {
+			return ErrAdminUsernameExists
+		}
+	}
+	if email != "" {
+		if _, exists := existingEmails[email]; exists {
+			return ErrAdminEmailExists
 		}
 	}
 	return nil
@@ -189,6 +208,10 @@ func (s *Service) create(ctx context.Context, request CreateRequest, status stri
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	if err := validateAdminIdentityAvailability(ctx, tx, request); err != nil {
+		return nil, err
+	}
+
 	var result Organization
 	err = tx.QueryRow(ctx, `INSERT INTO organizations (organization_code, legal_name, display_name, organization_type, primary_email, security_email, sector, industry, deployment_mode, status, approved_at) VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),'OFFLINE',$9,$10) RETURNING id, organization_code, legal_name, display_name, organization_type, primary_email, status, created_at`, request.Code, request.LegalName, request.DisplayName, request.OrganizationType, strings.ToLower(strings.TrimSpace(request.PrimaryEmail)), strings.ToLower(strings.TrimSpace(request.SecurityEmail)), strings.ToUpper(strings.TrimSpace(request.Sector)), strings.ToUpper(strings.TrimSpace(request.Industry)), status, approvedAt).Scan(&result.ID, &result.Code, &result.LegalName, &result.DisplayName, &result.OrganizationType, &result.PrimaryEmail, &result.Status, &result.CreatedAt)
 	if err != nil {
@@ -209,6 +232,39 @@ func (s *Service) create(ctx context.Context, request CreateRequest, status stri
 		return nil, fmt.Errorf("commit organization creation: %w", err)
 	}
 	return &result, nil
+}
+
+func validateAdminIdentityAvailability(ctx context.Context, tx pgx.Tx, request CreateRequest) error {
+	username := strings.ToLower(strings.TrimSpace(request.AdminUsername))
+	email := strings.ToLower(strings.TrimSpace(request.AdminEmail))
+	if username == "" && email == "" {
+		return nil
+	}
+
+	rows, err := tx.Query(ctx, `SELECT LOWER(username), LOWER(official_email) FROM users WHERE deleted_at IS NULL AND (LOWER(username) = LOWER($1) OR LOWER(official_email) = LOWER($2)) LIMIT 10`, username, email)
+	if err != nil {
+		return fmt.Errorf("check admin identity availability: %w", err)
+	}
+	defer rows.Close()
+
+	existingUsernames := make(map[string]struct{}, 2)
+	existingEmails := make(map[string]struct{}, 2)
+	for rows.Next() {
+		var storedUsername, storedEmail string
+		if err := rows.Scan(&storedUsername, &storedEmail); err != nil {
+			return fmt.Errorf("read organization admin identities: %w", err)
+		}
+		if storedUsername != "" {
+			existingUsernames[storedUsername] = struct{}{}
+		}
+		if storedEmail != "" {
+			existingEmails[storedEmail] = struct{}{}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("scan organization admin identities: %w", err)
+	}
+	return validateOrganizationAdminUniqueness(request, existingUsernames, existingEmails)
 }
 
 func provisionPrimaryAdmin(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, request CreateRequest) error {
@@ -320,8 +376,15 @@ func (s *Service) ListHistory(ctx context.Context, id uuid.UUID) ([]ApprovalHist
 	}
 	return items, rows.Err()
 }
-func (s *Service) List(ctx context.Context) ([]Organization, error) {
-	rows, err := s.db.Query(ctx, `SELECT id, organization_code, legal_name, display_name, organization_type, primary_email, status, created_at FROM organizations WHERE deleted_at IS NULL ORDER BY organization_code`)
+func (s *Service) List(ctx context.Context, organizationID uuid.UUID, global bool) ([]Organization, error) {
+	query := `SELECT id, organization_code, legal_name, display_name, organization_type, primary_email, status, created_at FROM organizations WHERE deleted_at IS NULL`
+	args := []any{}
+	if !global {
+		query += ` AND id = $1`
+		args = append(args, organizationID)
+	}
+	query += ` ORDER BY organization_code`
+	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -363,6 +426,23 @@ func seedStarterDepartments(ctx context.Context, executor sqlExecutor, organizat
 type Handler struct{ service *Service }
 
 func NewHandler(service *Service) *Handler { return &Handler{service} }
+
+func organizationIDFromContext(c *gin.Context) (uuid.UUID, bool) {
+	value, ok := c.Get("organization_id")
+	if !ok {
+		return uuid.Nil, false
+	}
+	switch id := value.(type) {
+	case uuid.UUID:
+		return id, id != uuid.Nil
+	case string:
+		parsed, err := uuid.Parse(strings.TrimSpace(id))
+		return parsed, err == nil && parsed != uuid.Nil
+	default:
+		return uuid.Nil, false
+	}
+}
+
 func (h *Handler) Create(c *gin.Context) {
 	var req CreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -430,8 +510,30 @@ func (h *Handler) decide(c *gin.Context, approved bool) {
 	}
 	response.Success(c, http.StatusOK, message, nil)
 }
+func isSuperAdmin(c *gin.Context) bool {
+	value, ok := c.Get("roles")
+	if !ok {
+		return false
+	}
+	roles, ok := value.([]string)
+	if !ok {
+		return false
+	}
+	for _, role := range roles {
+		if strings.EqualFold(strings.TrimSpace(role), "SUPER_ADMIN") {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *Handler) List(c *gin.Context) {
-	result, err := h.service.List(c.Request.Context())
+	organizationID, ok := organizationIDFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "Organization information is missing", nil)
+		return
+	}
+	result, err := h.service.List(c.Request.Context(), organizationID, isSuperAdmin(c))
 	if err != nil {
 		response.InternalServerError(c, "Failed to list organizations", err.Error())
 		return

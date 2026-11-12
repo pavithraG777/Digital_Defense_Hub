@@ -140,6 +140,21 @@ func (h *EncryptionKeyHandler) GetActiveEncryptionKey(
 	)
 }
 
+func (h *EncryptionKeyHandler) ListEncryptionKeys(c *gin.Context) {
+	organizationID, ok := encryptionKeyUUIDFromContext(c, "organization_id")
+	if !ok {
+		response.Unauthorized(c, "Organization information is missing", nil)
+		return
+	}
+	items, err := h.service.ListEncryptionKeys(c.Request.Context(), organizationID)
+	if err != nil {
+		_ = c.Error(err)
+		response.InternalServerError(c, "Failed to retrieve encryption key history", nil)
+		return
+	}
+	response.OK(c, "Encryption key history retrieved successfully", items)
+}
+
 func (h *EncryptionKeyHandler) isAvailable() bool {
 	return h != nil && h.service != nil
 }

@@ -17,7 +17,8 @@ type CreateHoneytokenRequest struct {
 	DecoyUsername string `json:"decoy_username,omitempty" binding:"omitempty,max=100"`
 	DecoyEmail    string `json:"decoy_email,omitempty" binding:"omitempty,email,max=255"`
 
-	TargetSystem string `json:"target_system,omitempty" binding:"omitempty,max=100"`
+	TargetSystem   string `json:"target_system,omitempty" binding:"omitempty,max=100"`
+	ProtectedValue string `json:"protected_value,omitempty" binding:"omitempty,min=4,max=8192"`
 
 	Classification string `json:"classification" binding:"required"`
 
@@ -38,6 +39,7 @@ type CreateHoneytokenResponse struct {
 	HoneytokenType string `json:"honeytoken_type"`
 
 	GeneratedValue string `json:"generated_value"`
+	ValueMode      string `json:"value_mode"`
 	ValuePrefix    string `json:"value_prefix,omitempty"`
 
 	Classification string `json:"classification"`
@@ -139,6 +141,14 @@ type UpdateHoneytokenStatusRequest struct {
 // agent or detection service.
 type ValidateHoneytokenRequest struct {
 	ObservedValue string `json:"observed_value" binding:"required,min=1,max=8192"`
+}
+
+// ObserveHoneytokenRequest is the connector-facing envelope used by every
+// honeytoken type. Network identity is derived from the HTTP request and is
+// deliberately not accepted from the caller.
+type ObserveHoneytokenRequest struct {
+	ObservedValue string `json:"observed_value" binding:"required,min=1,max=8192"`
+	TargetContext string `json:"target_context,omitempty" binding:"omitempty,max=1024"`
 }
 
 // ValidateHoneytokenResponse reports whether an active honeytoken

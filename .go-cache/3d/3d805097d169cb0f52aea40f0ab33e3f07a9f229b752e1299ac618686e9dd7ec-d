@@ -1,0 +1,8 @@
+./detector.go
+./domain.go
+./feature.go
+./handler.go
+./repository.go
+./routes.go
+./service.go
+./worker.go

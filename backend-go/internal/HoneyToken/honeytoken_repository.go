@@ -22,8 +22,10 @@ var (
 
 // HoneytokenListFilter contains normalized repository filters.
 type HoneytokenListFilter struct {
-	Page  int
-	Limit int
+	Page                    int
+	Limit                   int
+	IncludePlatformOwned    bool
+	IncludeTenantAdminOwned bool
 
 	Search         string
 	HoneytokenType string
@@ -276,6 +278,37 @@ func (r *Repository) FindHoneytokenByID(
 	return token, nil
 }
 
+// FindHoneytokenByGlobalID is used only by the public observation collector.
+// The collector returns no token metadata, so lookup does not expose tenant
+// data; organization ownership is recovered here for the normal validator.
+func (r *Repository) FindHoneytokenByGlobalID(ctx context.Context, honeytokenID uuid.UUID) (*Honeytoken, error) {
+	if r == nil || r.db == nil {
+		return nil, fmt.Errorf("honeytoken repository is unavailable")
+	}
+	if ctx == nil {
+		return nil, fmt.Errorf("context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("request context is not active: %w", err)
+	}
+	if honeytokenID == uuid.Nil {
+		return nil, fmt.Errorf("honeytoken ID is required")
+	}
+	const query = `SELECT id, organization_id, department_id, policy_id, honeytoken_code, honeytoken_name,
+		honeytoken_type, description, decoy_username, decoy_email, decoy_value_encrypted, decoy_value_hash,
+		value_prefix, target_system, deployment_location, classification, access_count, last_triggered_at,
+		owner_user_id, created_by, deployed_at, expires_at, status, created_at, updated_at, deleted_at
+		FROM honeytokens WHERE id = $1 AND deleted_at IS NULL LIMIT 1;`
+	token, err := scanHoneytoken(r.db.QueryRow(ctx, query, honeytokenID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrHoneytokenNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to find observed honeytoken: %w", err)
+	}
+	return token, nil
+}
+
 // ListHoneytokens returns paginated organization-owned honeytokens.
 func (r *Repository) ListHoneytokens(
 	ctx context.Context,
@@ -315,12 +348,28 @@ func (r *Repository) ListHoneytokens(
 	SELECT COUNT(*)
 	FROM honeytokens
 	WHERE
-		organization_id = $1
+				($7::boolean OR organization_id = $1)
 		AND deleted_at IS NULL
 		AND ($2 = '' OR UPPER(honeytoken_type) = $2)
 		AND ($3 = '' OR UPPER(classification) = $3)
 		AND ($4 = '' OR UPPER(status) = $4)
-		AND ($5::uuid IS NULL OR department_id = $5)
+                AND ($5::uuid IS NULL OR department_id = $5)
+				AND ($7::boolean OR NOT EXISTS (
+					SELECT 1 FROM user_roles platform_ur
+					JOIN roles platform_r ON platform_r.id = platform_ur.role_id
+					WHERE platform_ur.user_id = honeytokens.created_by
+					  AND platform_ur.is_active = TRUE
+					  AND UPPER(platform_ur.status) = 'ACTIVE'
+					  AND UPPER(platform_r.role_code) = 'SUPER_ADMIN'
+				))
+				AND ($8::boolean OR NOT EXISTS (
+					SELECT 1 FROM user_roles admin_ur
+					JOIN roles admin_r ON admin_r.id = admin_ur.role_id
+					WHERE admin_ur.user_id = honeytokens.created_by
+					  AND admin_ur.is_active = TRUE
+					  AND UPPER(admin_ur.status) = 'ACTIVE'
+					  AND (UPPER(admin_r.role_code) = 'MANAGER' OR UPPER(admin_r.role_code) LIKE '%ADMIN%')
+				))
 		AND (
 			$6 = ''
 			OR honeytoken_name ILIKE '%' || $6 || '%'
@@ -340,6 +389,8 @@ func (r *Repository) ListHoneytokens(
 		filter.Status,
 		filter.DepartmentID,
 		filter.Search,
+		filter.IncludePlatformOwned,
+		filter.IncludeTenantAdminOwned,
 	).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf(
 			"failed to count honeytokens: %w",
@@ -377,12 +428,28 @@ func (r *Repository) ListHoneytokens(
 		deleted_at
 	FROM honeytokens
 	WHERE
-		organization_id = $1
+				($7::boolean OR organization_id = $1)
 		AND deleted_at IS NULL
 		AND ($2 = '' OR UPPER(honeytoken_type) = $2)
 		AND ($3 = '' OR UPPER(classification) = $3)
 		AND ($4 = '' OR UPPER(status) = $4)
-		AND ($5::uuid IS NULL OR department_id = $5)
+                AND ($5::uuid IS NULL OR department_id = $5)
+				AND ($7::boolean OR NOT EXISTS (
+					SELECT 1 FROM user_roles platform_ur
+					JOIN roles platform_r ON platform_r.id = platform_ur.role_id
+					WHERE platform_ur.user_id = honeytokens.created_by
+					  AND platform_ur.is_active = TRUE
+					  AND UPPER(platform_ur.status) = 'ACTIVE'
+					  AND UPPER(platform_r.role_code) = 'SUPER_ADMIN'
+				))
+				AND ($8::boolean OR NOT EXISTS (
+					SELECT 1 FROM user_roles admin_ur
+					JOIN roles admin_r ON admin_r.id = admin_ur.role_id
+					WHERE admin_ur.user_id = honeytokens.created_by
+					  AND admin_ur.is_active = TRUE
+					  AND UPPER(admin_ur.status) = 'ACTIVE'
+					  AND (UPPER(admin_r.role_code) = 'MANAGER' OR UPPER(admin_r.role_code) LIKE '%ADMIN%')
+				))
 		AND (
 			$6 = ''
 			OR honeytoken_name ILIKE '%' || $6 || '%'
@@ -390,8 +457,8 @@ func (r *Repository) ListHoneytokens(
 			OR COALESCE(target_system, '') ILIKE '%' || $6 || '%'
 		)
 	ORDER BY created_at DESC, id DESC
-	LIMIT $7
-	OFFSET $8;
+        LIMIT $9
+        OFFSET $10;
 	`
 
 	offset := (filter.Page - 1) * filter.Limit
@@ -405,6 +472,8 @@ func (r *Repository) ListHoneytokens(
 		filter.Status,
 		filter.DepartmentID,
 		filter.Search,
+		filter.IncludePlatformOwned,
+		filter.IncludeTenantAdminOwned,
 		filter.Limit,
 		offset,
 	)

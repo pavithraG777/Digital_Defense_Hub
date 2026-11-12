@@ -584,6 +584,60 @@ func (s *Service) GenerateInvestigationReport(incidentID uuid.UUID) (*Investigat
 	return report, nil
 }
 
+// GenerateForensicReport creates an idempotent report for an incident owned by
+// the primary incident engine. DFIR keeps the report keyed by that incident
+// ID so both systems reference the same investigation.
+func (s *Service) GenerateForensicReport(
+	ctx context.Context,
+	incidentID uuid.UUID,
+	title string,
+	severity string,
+	summary string,
+) error {
+	if s == nil {
+		return ErrDFIRServiceUnavailable
+	}
+	if incidentID == uuid.Nil {
+		return ErrInvalidDFIRIncident
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, existing := range s.reports {
+		if existing.IncidentID == incidentID {
+			return nil
+		}
+	}
+
+	now := time.Now().UTC()
+	if strings.TrimSpace(summary) == "" {
+		summary = fmt.Sprintf(
+			"Forensic report for incident '%s' with severity %s.",
+			strings.TrimSpace(title),
+			strings.TrimSpace(severity),
+		)
+	}
+
+	reportID := uuid.New()
+	s.reports[reportID] = &InvestigationReport{
+		ID:          reportID,
+		IncidentID:  incidentID,
+		GeneratedAt: now,
+		CreatedAt:   now,
+		Summary:     summary,
+		JSONReport: fmt.Sprintf(
+			`{"incident_id":"%s","title":%q,"severity":%q,"summary":%q}`,
+			incidentID, title, severity, summary,
+		),
+		PDFReport: []byte("PDF_REPORT_PLACEHOLDER"),
+		Severity:  severity,
+	}
+
+	_ = ctx
+	return nil
+}
+
 var (
 	ErrDFIRServiceUnavailable   = errors.New("DFIR service is unavailable")
 	ErrInvalidDFIRIncident      = errors.New("invalid DFIR incident")

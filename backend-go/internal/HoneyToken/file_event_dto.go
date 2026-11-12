@@ -73,6 +73,15 @@ type CreateFileEventResponse struct {
 	ReceivedAt time.Time `json:"received_at"`
 }
 
+// SimulateCanaryAccessResponse is returned only by the explicit UI simulation
+// endpoint. The address is from an IANA documentation range and never claims
+// to be a real visitor address.
+type SimulateCanaryAccessResponse struct {
+	Event             *CreateFileEventResponse `json:"event"`
+	SimulatedSourceIP string                   `json:"simulated_source_ip"`
+	Simulation        bool                     `json:"simulation"`
+}
+
 // GetFileEventResponse contains safe forensic metadata. Internal paths,
 // command lines, network addresses and raw watcher payloads are excluded.
 type GetFileEventResponse struct {

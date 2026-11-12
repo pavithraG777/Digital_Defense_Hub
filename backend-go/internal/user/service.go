@@ -171,6 +171,7 @@ func isValidUserType(
 func (s *Service) ListUsers(
 	ctx context.Context,
 	organizationID uuid.UUID,
+	includePlatformCreated bool,
 	req ListUsersRequest,
 ) (*ListUsersResponse, error) {
 	req.Search = strings.TrimSpace(
@@ -192,6 +193,7 @@ func (s *Service) ListUsers(
 	return s.repository.ListUsers(
 		ctx,
 		organizationID,
+		includePlatformCreated,
 		req,
 	)
 }

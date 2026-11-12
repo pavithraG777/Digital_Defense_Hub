@@ -1,5 +1,6 @@
 param(
     [string]$OutboxPath = "$PSScriptRoot\..\backend-go\storage\notification-outbox\local-desktop",
+    [bool]$PlayDesktopSound = $false,
     [ValidateRange(1, 3)]
     [int]$AlertSoundRepeats = 2,
     [ValidateRange(37, 32767)]
@@ -126,9 +127,11 @@ function Process-NotificationFile {
     }
 
     $playSound = Get-PlaySoundFromFile -path $path
-    if ($playSound -eq $true) {
+    if ($playSound -eq $true -and $PlayDesktopSound) {
         Write-Host "[NOTIFY] play_sound=true for $path" -ForegroundColor Yellow
         Play-AlertBeep
+    } elseif ($playSound -eq $true) {
+        Write-Host "[MUTED] Browser siren owns alert audio for $path" -ForegroundColor DarkGray
     } else {
         Write-Host "[SKIP] play_sound not enabled for $path" -ForegroundColor DarkGray
     }

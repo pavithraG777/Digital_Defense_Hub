@@ -63,6 +63,8 @@ class ImageAnalyzer:
         model_runtime = "HEURISTIC_FALLBACK"
         model_probability: float | None = None
         model_confidence: float | None = None
+        model_probability_weight = 0.75
+        calibrated_decision_threshold: float | None = None
 
         if model is not None:
             try:
@@ -93,6 +95,19 @@ class ImageAnalyzer:
                     model_payload,
                 )
 
+                configured_weight = model.configuration.get(
+                    "model_probability_weight",
+                    0.75,
+                )
+                if isinstance(configured_weight, (int, float)) and 0 < float(configured_weight) <= 1:
+                    model_probability_weight = float(configured_weight)
+                if model.configuration.get("calibrated_decision_threshold") is True:
+                    calibrated_decision_threshold = float(model.confidence_threshold)
+                    if not 50.0 <= calibrated_decision_threshold <= 99.0:
+                        raise MediaRuntimeError(
+                            "calibrated model decision threshold must be between 50 and 99"
+                        )
+
                 if model_probability is None:
                     raise MediaRuntimeError(
                         "model result did not contain a "
@@ -115,7 +130,9 @@ class ImageAnalyzer:
                             if model_confidence is not None
                             else 70.0
                         ),
-                        detected=model_probability >= 50.0,
+                        detected=model_probability >= (
+                            calibrated_decision_threshold or 50.0
+                        ),
                     )
                 )
             except Exception as error:
@@ -144,8 +161,8 @@ class ImageAnalyzer:
 
         if model_probability is not None:
             deepfake_probability = self._clamp(
-                (model_probability * 0.75)
-                + (heuristic_probability * 0.25)
+                (model_probability * model_probability_weight)
+                + (heuristic_probability * (1.0 - model_probability_weight))
             )
             confidence_score = self._clamp(
                 (
@@ -170,6 +187,7 @@ class ImageAnalyzer:
         )
         detection_result = self._deepfake_result(
             deepfake_probability,
+            calibrated_decision_threshold,
         )
 
         suspicious_regions = self._convert_regions(
@@ -819,7 +837,18 @@ class ImageAnalyzer:
     @staticmethod
     def _deepfake_result(
         probability: float,
+        calibrated_threshold: float | None = None,
     ) -> str:
+        if calibrated_threshold is not None:
+            if probability >= min(100.0, calibrated_threshold + 15.0):
+                return "DEEPFAKE"
+            if probability >= calibrated_threshold:
+                return "LIKELY_DEEPFAKE"
+            if probability >= max(0.0, calibrated_threshold - 15.0):
+                return "SUSPICIOUS"
+            if probability >= max(0.0, calibrated_threshold - 35.0):
+                return "LIKELY_AUTHENTIC"
+            return "AUTHENTIC"
         if probability >= 85.0:
             return "DEEPFAKE"
         if probability >= 70.0:

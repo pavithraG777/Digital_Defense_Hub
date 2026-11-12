@@ -51,6 +51,11 @@ func NewRepository(db *pgxpool.Pool) (*Repository, error) {
 }
 func (r *Repository) EnsureSchema(ctx context.Context) error {
 	queries := []string{`CREATE TABLE IF NOT EXISTS evidence_preservation_jobs(id UUID PRIMARY KEY,case_id UUID NOT NULL,items JSONB NOT NULL DEFAULT '[]',status TEXT NOT NULL DEFAULT 'PENDING',created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`, `ALTER TABLE evidence_preservation_jobs ADD COLUMN IF NOT EXISTS organization_id UUID`, `ALTER TABLE evidence_preservation_jobs ADD COLUMN IF NOT EXISTS retention_until TIMESTAMPTZ`, `ALTER TABLE evidence_preservation_jobs ADD COLUMN IF NOT EXISTS legal_hold BOOLEAN NOT NULL DEFAULT FALSE`, `ALTER TABLE evidence_preservation_jobs ADD COLUMN IF NOT EXISTS integrity_verified BOOLEAN NOT NULL DEFAULT FALSE`, `ALTER TABLE evidence_preservation_jobs ADD COLUMN IF NOT EXISTS created_by UUID`, `ALTER TABLE evidence_preservation_jobs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`, `ALTER TABLE evidence_preservation_jobs ADD COLUMN IF NOT EXISTS manifest_evidence_id UUID`, `CREATE TABLE IF NOT EXISTS evidence_custody_events(id UUID PRIMARY KEY,organization_id UUID NOT NULL,job_id UUID NOT NULL,action TEXT NOT NULL,from_custodian UUID,to_custodian UUID,note TEXT NOT NULL,actor_id UUID NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`, `ALTER TABLE evidence_custody_events ADD COLUMN IF NOT EXISTS previous_event_hash CHAR(64)`, `ALTER TABLE evidence_custody_events ADD COLUMN IF NOT EXISTS event_hash CHAR(64)`, `CREATE TABLE IF NOT EXISTS evidence_worm_attestations(id UUID PRIMARY KEY,organization_id UUID NOT NULL,evidence_id UUID NOT NULL,provider TEXT NOT NULL,bucket TEXT NOT NULL,object_version_id TEXT NOT NULL,retention_mode TEXT NOT NULL,retain_until TIMESTAMPTZ NOT NULL,legal_hold BOOLEAN NOT NULL,provider_request_id TEXT NOT NULL,attested_by UUID,attested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),UNIQUE(organization_id,evidence_id))`, `CREATE TABLE IF NOT EXISTS evidence_destruction_certificates(id UUID PRIMARY KEY,organization_id UUID NOT NULL,evidence_id UUID NOT NULL,certificate_sha256 CHAR(64) NOT NULL,certificate JSONB NOT NULL,signing_key_id TEXT NOT NULL,signature TEXT NOT NULL,approved_by UUID NOT NULL,destroyed_at TIMESTAMPTZ NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),UNIQUE(organization_id,evidence_id))`}
+	queries = append(queries,
+		`CREATE TABLE IF NOT EXISTS evidence_access_policies(job_id UUID PRIMARY KEY,organization_id UUID NOT NULL,owner_user_id UUID NOT NULL,trusted_ip TEXT NOT NULL,password_hash TEXT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+		`CREATE TABLE IF NOT EXISTS evidence_access_grants(id UUID PRIMARY KEY,organization_id UUID NOT NULL,job_id UUID NOT NULL,user_id UUID NOT NULL,ip_address TEXT NOT NULL,token_hash CHAR(64) NOT NULL,expires_at TIMESTAMPTZ NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+		`CREATE INDEX IF NOT EXISTS idx_evidence_access_grants_lookup ON evidence_access_grants(organization_id,job_id,user_id,token_hash)`,
+	)
 	for _, q := range queries {
 		if _, e := r.db.Exec(ctx, q); e != nil {
 			return fmt.Errorf("ensure evidence vault schema: %w", e)
@@ -138,7 +143,7 @@ func (r *Repository) Transition(ctx context.Context, org, id, actor uuid.UUID, s
 	return r.Get(ctx, org, id)
 }
 func (r *Repository) Custody(ctx context.Context, org, id uuid.UUID) ([]CustodyEvent, error) {
-	rows, e := r.db.Query(ctx, `SELECT id,job_id,action,from_custodian,to_custodian,note,actor_id,created_at,previous_event_hash,event_hash FROM evidence_custody_events WHERE organization_id=$1 AND job_id=$2 ORDER BY created_at,id`, org, id)
+	rows, e := r.db.Query(ctx, `SELECT id,job_id,action,from_custodian,to_custodian,note,actor_id,created_at,COALESCE(previous_event_hash,''),COALESCE(event_hash,'') FROM evidence_custody_events WHERE organization_id=$1 AND job_id=$2 ORDER BY created_at,id`, org, id)
 	if e != nil {
 		return nil, e
 	}
