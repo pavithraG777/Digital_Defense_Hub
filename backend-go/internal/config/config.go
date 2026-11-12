@@ -1,7 +1,9 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -362,7 +364,7 @@ func Load() (*Config, error) {
 
 	setConfigurationDefaults()
 
-	if err := viper.ReadInConfig(); err != nil {
+	if err := viper.ReadInConfig(); err != nil && !isMissingConfigFile(err) {
 		return nil, fmt.Errorf(
 			"unable to load .env file: %w",
 			err,
@@ -498,12 +500,18 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	appPort := strings.TrimSpace(viper.GetString("APP_PORT"))
+	if appPort == "" {
+		// Managed hosts such as Render provide PORT rather than APP_PORT.
+		appPort = strings.TrimSpace(os.Getenv("PORT"))
+	}
+
 	cfg := &Config{
 		App: AppConfig{
 			Name:     viper.GetString("APP_NAME"),
 			FullName: viper.GetString("APP_FULL_NAME"),
 			Env:      viper.GetString("APP_ENV"),
-			Port:     viper.GetString("APP_PORT"),
+			Port:     appPort,
 			Version:  viper.GetString("APP_VERSION"),
 		},
 
@@ -725,6 +733,11 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func isMissingConfigFile(err error) bool {
+	var configNotFound viper.ConfigFileNotFoundError
+	return errors.As(err, &configNotFound) || os.IsNotExist(err)
 }
 
 func loadConfigurationDuration(

@@ -54,6 +54,9 @@ backend-go/.codex-go-cache/
 runtime-logs/
 
 # Prepared training corpora and downloaded public datasets are local artifacts.
+/datasets/
+/data/downloaded/
+/data/colab-upload/
 datasets/unified-manipulation-detection-v5-12000/
 datasets/unified-manipulation-detection-v6-20000/
 datasets/unified-manipulation-detection-v7-20000/
