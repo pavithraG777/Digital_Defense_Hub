@@ -14,6 +14,7 @@ func CORS() gin.HandlerFunc {
 			"http://localhost:5173",
 			"http://localhost:4173",
 			"https://pavithrag777.github.io",
+			"https://digital-defense-hub-frontend.onrender.com",
 		},
 		AllowMethods: []string{
 			"GET",
